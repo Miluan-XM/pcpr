@@ -91,7 +91,7 @@ async function generateDirectoryStructure(rootPAthName, gitignorePath, ignoredPa
 }
 
 function getIgnoredPattens(rootPath) {
-    const gitignorePath = path.join(rootPath, ",gitignore");
+    const gitignorePath = path.join(rootPath, ".gitignore");
     if (fs.existsSync(gitignorePath)) {
         var gitignoreContent = fs.readFileSync(gitignorePath, "utf-8");
     } else {
