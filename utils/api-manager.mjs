@@ -14,35 +14,35 @@ const _isActive = (context, id) => getActiveProfileID(context) === id;
 
 // ── 数据层 ──
 
-export function getAllProfile(context) {
+function getAllProfile(context) {
     return context.globalState.get(KEYS.PROFILES, []);
 }
 
-export async function saveProfiles(context, profiles) {
+async function saveProfiles(context, profiles) {
     await context.globalState.update(KEYS.PROFILES, profiles);
 }
 
-export function getActiveProfileID(context) {
+function getActiveProfileID(context) {
     return context.globalState.get(KEYS.ACTIVE_ID);
 }
 
-export function findProfile(profiles, profileID) {
+function findProfile(profiles, profileID) {
     return profiles.find(p => p.id === profileID) || null;
 }
 
-export function getActiveProfile(context) {
+function getActiveProfile(context) {
     return findProfile(getAllProfile(context), getActiveProfileID(context));
 }
 
-export async function saveAPIKey(context, profileID, key) {
+async function saveAPIKey(context, profileID, key) {
     await context.secrets.store(KEYS.API_KEY_PREFIX + profileID, key);
 }
 
-export async function getAPIKey(context, profileID) {
+async function getAPIKey(context, profileID) {
     return await context.secrets.get(KEYS.API_KEY_PREFIX + profileID);
 }
 
-export async function deleteAPIKey(context, profileID) {
+async function deleteAPIKey(context, profileID) {
     await context.secrets.delete(KEYS.API_KEY_PREFIX + profileID);
 }
 
@@ -50,7 +50,7 @@ export async function deleteAPIKey(context, profileID) {
 
 // ── 核心操作 ──
 
-export async function activateProfile(context, profileID) {
+async function activateProfile(context, profileID) {
     const profile = findProfile(getAllProfile(context), profileID);
     if (!profile) return vscode.window.showErrorMessage('API 配置不存在');
 
@@ -71,7 +71,7 @@ export async function activateProfile(context, profileID) {
     vscode.window.showInformationMessage(`已切换到: ${profile.name} / ${modelName || '未选择模型'}`);
 }
 
-export async function activateModel(context, modelIndex) {
+async function activateModel(context, modelIndex) {
     const profile = getActiveProfile(context);
     if (!profile) return vscode.window.showErrorMessage('没有激活的 API 配置');
     if (modelIndex < 0 || modelIndex >= profile.models.length) return vscode.window.showErrorMessage('无效的模型索引');
@@ -83,7 +83,7 @@ export async function activateModel(context, modelIndex) {
     await activateProfile(context, profile.id);
 }
 
-export async function addProfile(context, profile) {
+async function addProfile(context, profile) {
     const profiles = getAllProfile(context);
     profile.id = getRandomID();
     profiles.push(profile);
@@ -92,7 +92,7 @@ export async function addProfile(context, profile) {
     return profile;
 }
 
-export async function deleteProfile(context, profileID) {
+async function deleteProfile(context, profileID) {
     const profiles = getAllProfile(context);
     const idx = profiles.findIndex(p => p.id === profileID);
     if (idx === -1) return;
@@ -115,7 +115,7 @@ export async function deleteProfile(context, profileID) {
     }
 }
 
-export async function updateProfile(context, profileID, updates) {
+async function updateProfile(context, profileID, updates) {
     const profiles = getAllProfile(context);
     const target = findProfile(profiles, profileID);
     if (!target) return;
@@ -198,7 +198,7 @@ export async function addApiUI(context) {
     vscode.window.showInformationMessage(`API "${name}" 添加成功！`);
 }
 
-export async function buildProfileItems(context, profile) {
+async function buildProfileItems(context, profile) {
     const items = [
         { label: `$(symbol-key) 名称: ${profile.name}`, field: 'name', description: '修改显示名称' },
         { label: `$(link) Base URL: ${profile.baseURL}`, field: 'baseURL', description: '修改 API 基础地址' }
@@ -375,7 +375,7 @@ export async function switchApiUI(context) {
     if (picked) await activateProfile(context, picked.profileId);
 }
 
-export async function switchModelUI(context, profile) {
+async function switchModelUI(context, profile) {
     const items = profile.models.map((m, i) => ({
         label: (i === profile.selectedModelIndex ? '$(circle-filled) ' : '$(circle-outline) ') + m.name, modelIndex: i
     }));
