@@ -12,7 +12,7 @@ const getRandomID = () => `${Date.now().toString(36)}-${Math.random().toString(3
 const getModelName = p => p.models[p.selectedModelIndex]?.name || '';
 const _isActive = (context, id) => getActiveProfileID(context) === id;
 
-// ── 数据层 ──
+// ── Data Layer ──
 
 function getAllProfile(context) {
     return context.globalState.get(KEYS.PROFILES, []);
@@ -48,11 +48,11 @@ async function deleteAPIKey(context, profileID) {
 
 
 
-// ── 核心操作 ──
+// ── Core Operations ──
 
 async function activateProfile(context, profileID) {
     const profile = findProfile(getAllProfile(context), profileID);
-    if (!profile) return vscode.window.showErrorMessage('API 配置不存在');
+    if (!profile) return vscode.window.showErrorMessage('API configuration does not exist');
 
     const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
     const modelName = getModelName(profile);
@@ -68,13 +68,13 @@ async function activateProfile(context, profileID) {
     }
 
     await context.globalState.update(KEYS.ACTIVE_ID, profileID);
-    vscode.window.showInformationMessage(`已切换到: ${profile.name} / ${modelName || '未选择模型'}`);
+    vscode.window.showInformationMessage(`Switched to: ${profile.name} / ${modelName || 'No model selected'}`);
 }
 
 async function activateModel(context, modelIndex) {
     const profile = getActiveProfile(context);
-    if (!profile) return vscode.window.showErrorMessage('没有激活的 API 配置');
-    if (modelIndex < 0 || modelIndex >= profile.models.length) return vscode.window.showErrorMessage('无效的模型索引');
+    if (!profile) return vscode.window.showErrorMessage('No active API configuration');
+    if (modelIndex < 0 || modelIndex >= profile.models.length) return vscode.window.showErrorMessage('Invalid model index');
 
     profile.selectedModelIndex = modelIndex;
     const profiles = getAllProfile(context);
@@ -124,7 +124,7 @@ async function updateProfile(context, profileID, updates) {
     if (_isActive(context, profileID)) await activateProfile(context, profileID);
 }
 
-// ── 初始化 / 迁移 ──
+// ── Initialization / Migration ──
 
 export async function initProfiles(context) {
     if (getAllProfile(context).length > 0) return;
@@ -136,13 +136,13 @@ export async function initProfiles(context) {
 
     if (cloudURL || cloudModel) {
         defaults.push({
-            id: getRandomID(), name: '默认云端', baseURL: cloudURL || '',
+            id: getRandomID(), name: 'Default Cloud', baseURL: cloudURL || '',
             models: cloudModel ? [{ name: cloudModel }] : [], selectedModelIndex: 0, isLocal: false
         });
     }
     if (localURL || localModel) {
         defaults.push({
-            id: getRandomID(), name: '默认本地', baseURL: localURL || 'http://localhost:11434/v1/',
+            id: getRandomID(), name: 'Default Local', baseURL: localURL || 'http://localhost:11434/v1/',
             models: localModel ? [{ name: localModel }] : [], selectedModelIndex: 0, isLocal: true
         });
     }
@@ -150,40 +150,40 @@ export async function initProfiles(context) {
     if (defaults.length > 0) {
         await saveProfiles(context, defaults);
         await activateProfile(context, defaults[0].id);
-        vscode.window.showInformationMessage('已从旧版配置迁移 API 设置');
+        vscode.window.showInformationMessage('Migrated API settings from legacy configuration');
     } else {
-        vscode.window.showInformationMessage('请先添加 API 配置 (命令: PCPR: Add API)');
+        vscode.window.showInformationMessage('Please add an API configuration first (Command: PCPR: Add API)');
     }
 }
 
-// ── UI 组件 ──
+// ── UI Components ──
 
 export async function addApiUI(context) {
-    const name = await vscode.window.showInputBox({ prompt: '输入供应商名称', ignoreFocusOut: true });
+    const name = await vscode.window.showInputBox({ prompt: 'Enter provider name', ignoreFocusOut: true });
     if (!name) return;
-    const baseURL = await vscode.window.showInputBox({ prompt: '输入baseURL', ignoreFocusOut: true });
+    const baseURL = await vscode.window.showInputBox({ prompt: 'Enter base URL', ignoreFocusOut: true });
     if (!baseURL) return;
 
     const typeChoice = await vscode.window.showQuickPick(
-        [{ label: '云端', islocal: false }, { label: '本地', islocal: true }],
-        { placeHolder: '请选择 API 类型', ignoreFocusOut: true }
+        [{ label: 'Cloud', islocal: false }, { label: 'Local', islocal: true }],
+        { placeHolder: 'Select API type', ignoreFocusOut: true }
     );
     if (!typeChoice) return;
     const isLocal = typeChoice.islocal;
 
     let apiKey = '';
     if (!isLocal) {
-        const keyInput = await vscode.window.showInputBox({ prompt: '请输入 API Key', password: true, ignoreFocusOut: true });
+        const keyInput = await vscode.window.showInputBox({ prompt: 'Enter API Key', password: true, ignoreFocusOut: true });
         if (!keyInput) return;
         apiKey = keyInput;
     }
 
     const modelsInput = await vscode.window.showInputBox({
-        prompt: '请输入模型名称（多个用英文逗号分隔，最多 3 个）',
+        prompt: 'Enter model names (separate multiple with commas, max 3)',
         ignoreFocusOut: true,
         validateInput: v => {
             const m = v.split(',').map(s => s.trim()).filter(s => s);
-            return m.length === 0 ? '请至少输入一个模型名称' : m.length > 3 ? '最多只能添加 3 个模型' : null;
+            return m.length === 0 ? 'Please enter at least one model name' : m.length > 3 ? 'Maximum 3 models allowed' : null;
         }
     });
     if (!modelsInput) return;
@@ -195,59 +195,59 @@ export async function addApiUI(context) {
         await saveAPIKey(context, saved.id, apiKey);
         if (_isActive(context, saved.id)) await activateProfile(context, saved.id);
     }
-    vscode.window.showInformationMessage(`API "${name}" 添加成功！`);
+    vscode.window.showInformationMessage(`API "${name}" added successfully!`);
 }
 
 async function buildProfileItems(context, profile) {
     const items = [
-        { label: `$(symbol-key) 名称: ${profile.name}`, field: 'name', description: '修改显示名称' },
-        { label: `$(link) Base URL: ${profile.baseURL}`, field: 'baseURL', description: '修改 API 基础地址' }
+        { label: `$(symbol-key) Name: ${profile.name}`, field: 'name', description: 'Change display name' },
+        { label: `$(link) Base URL: ${profile.baseURL}`, field: 'baseURL', description: 'Change API base URL' }
     ];
 
     if (!profile.isLocal) {
         items.push({
-            label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? '已设置' : '未设置'}`,
-            field: 'apiKey', description: '修改或设置 API Key'
+            label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? 'Set' : 'Not set'}`,
+            field: 'apiKey', description: 'Modify or set API Key'
         });
     }
 
     items.push({
-        label: `$(package) 模型列表 (${profile.models.length}个)`,
+        label: `$(package) Models (${profile.models.length})`,
         field: 'models',
-        description: profile.models.map(m => m.name).join(', ') || '无模型'
+        description: profile.models.map(m => m.name).join(', ') || 'No models'
     });
 
     if (profile.models.length > 1) {
         items.push({
-            label: `$(check) 当前模型: ${getModelName(profile)}`,
+            label: `$(check) Current model: ${getModelName(profile)}`,
             field: 'selectedModelIndex',
-            description: '更改默认使用的模型'
+            description: 'Change default model'
         });
     }
 
     return items;
 }
 
-// 统一的字段编辑分发
+// Unified field editing dispatcher
 async function _editField(context, profile, field) {
-    const ok = { name: '名称已更新', baseURL: 'Base URL 已更新', apiKey: 'API Key 已更新', models: '模型列表已更新', selectedModelIndex: '默认模型已切换' };
+    const ok = { name: 'Name updated', baseURL: 'Base URL updated', apiKey: 'API Key updated', models: 'Model list updated', selectedModelIndex: 'Default model switched' };
 
     switch (field) {
         case 'name': {
-            const v = await vscode.window.showInputBox({ prompt: '输入新名称', value: profile.name, ignoreFocusOut: true });
+            const v = await vscode.window.showInputBox({ prompt: 'Enter new name', value: profile.name, ignoreFocusOut: true });
             if (v !== undefined) await updateProfile(context, profile.id, { name: v });
             break;
         }
         case 'baseURL': {
             const v = await vscode.window.showInputBox({
-                prompt: '输入新的 Base URL', value: profile.baseURL, ignoreFocusOut: true,
-                validateInput: v => (v.startsWith('http://') || v.startsWith('https://')) ? null : 'URL 必须以 http:// 或 https:// 开头'
+                prompt: 'Enter new Base URL', value: profile.baseURL, ignoreFocusOut: true,
+                validateInput: v => (v.startsWith('http://') || v.startsWith('https://')) ? null : 'URL must start with http:// or https://'
             });
             if (v !== undefined) await updateProfile(context, profile.id, { baseURL: v });
             break;
         }
         case 'apiKey': {
-            const v = await vscode.window.showInputBox({ prompt: '输入新的 API Key（留空则删除）', password: true, ignoreFocusOut: true });
+            const v = await vscode.window.showInputBox({ prompt: 'Enter new API Key (leave empty to delete)', password: true, ignoreFocusOut: true });
             if (v !== undefined) {
                 v === '' ? await deleteAPIKey(context, profile.id) : await saveAPIKey(context, profile.id, v);
                 if (_isActive(context, profile.id)) await activateProfile(context, profile.id);
@@ -256,9 +256,9 @@ async function _editField(context, profile, field) {
         }
         case 'models': {
             const v = await vscode.window.showInputBox({
-                prompt: '输入模型名称，用英文逗号分隔（最多3个）',
+                prompt: 'Enter model names, separated by commas (max 3)',
                 value: profile.models.map(m => m.name).join(','), ignoreFocusOut: true,
-                validateInput: v => { const m = v.split(',').map(s => s.trim()).filter(s => s); return m.length === 0 ? '至少需要一个模型' : m.length > 3 ? '最多 3 个模型' : null; }
+                validateInput: v => { const m = v.split(',').map(s => s.trim()).filter(s => s); return m.length === 0 ? 'At least one model required' : m.length > 3 ? 'Max 3 models' : null; }
             });
             if (v !== undefined) {
                 const newModels = v.split(',').map(s => s.trim()).filter(s => s).map(n => ({ name: n }));
@@ -272,7 +272,7 @@ async function _editField(context, profile, field) {
             const items = profile.models.map((m, i) => ({
                 label: (i === profile.selectedModelIndex ? '$(circle-filled) ' : '$(circle-outline) ') + m.name, modelIndex: i
             }));
-            const picked = await vscode.window.showQuickPick(items, { placeHolder: '选择默认模型', ignoreFocusOut: true });
+            const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Select default model', ignoreFocusOut: true });
             if (picked) {
                 await updateProfile(context, profile.id, { selectedModelIndex: picked.modelIndex });
                 if (_isActive(context, profile.id)) await activateProfile(context, profile.id);
@@ -285,22 +285,22 @@ async function _editField(context, profile, field) {
 
 export async function editApiUI(context, profileID) {
     const profiles = getAllProfile(context);
-    if (profiles.length === 0) return vscode.window.showInformationMessage('没有可编辑的 API 配置');
+    if (profiles.length === 0) return vscode.window.showInformationMessage('No API configuration to edit');
 
     if (!profileID) {
         const picked = await vscode.window.showQuickPick(
             profiles.map(p => ({ label: p.name, description: p.baseURL, profileID: p.id })),
-            { placeHolder: '选择要编辑的 API 配置', ignoreFocusOut: true }
+            { placeHolder: 'Select API configuration to edit', ignoreFocusOut: true }
         );
         if (!picked) return;
         profileID = picked.profileID;
     }
 
     const profile = findProfile(profiles, profileID);
-    if (!profile) return vscode.window.showErrorMessage('未找到该 API 配置');
+    if (!profile) return vscode.window.showErrorMessage('API configuration not found');
 
     const items = await buildProfileItems(context, profile);
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: '选择要修改的字段', ignoreFocusOut: true });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Select field to modify', ignoreFocusOut: true });
     if (picked) await _editField(context, profile, picked.field);
 }
 
@@ -308,27 +308,27 @@ export async function editApiUI(context, profileID) {
 
 export async function deleteApiUI(context, profileId) {
     const profiles = getAllProfile(context);
-    if (profiles.length === 0) return vscode.window.showInformationMessage('没有可删除的 API 配置');
+    if (profiles.length === 0) return vscode.window.showInformationMessage('No API configuration to delete');
 
     if (!profileId) {
         const picked = await vscode.window.showQuickPick(
             profiles.map(p => ({ label: p.name, description: p.baseURL, profileId: p.id })),
-            { placeHolder: '选择要删除的 API 配置', ignoreFocusOut: true }
+            { placeHolder: 'Select API configuration to delete', ignoreFocusOut: true }
         );
         if (!picked) return;
         profileId = picked.profileId;
     }
 
     const p = findProfile(profiles, profileId);
-    if (!p) return vscode.window.showErrorMessage('未找到该 API 配置');
+    if (!p) return vscode.window.showErrorMessage('API configuration not found');
 
     const confirm = await vscode.window.showWarningMessage(
-        `确定删除 "${p.name}" 吗？此操作不可恢复。`, { modal: true }, '确定删除'
+        `Are you sure you want to delete "${p.name}"? This action cannot be undone.`, { modal: true }, 'Delete'
     );
-    if (confirm !== '确定删除') return;
+    if (confirm !== 'Delete') return;
 
     await deleteProfile(context, profileId);
-    vscode.window.showInformationMessage('已删除: ' + p.name);
+    vscode.window.showInformationMessage('Deleted: ' + p.name);
 }
 
 async function _selectProfileUI(context, profileID) {
@@ -336,16 +336,16 @@ async function _selectProfileUI(context, profileID) {
     const modelName = getModelName(profile);
 
     const items = [
-        { label: '$(arrow-right) 切换到此 API', action: 'activate' },
-        { label: '$(edit) 编辑', action: 'edit' },
+        { label: '$(arrow-right) Switch to this API', action: 'activate' },
+        { label: '$(edit) Edit', action: 'edit' },
         {
-            label: `$(list-unordered) 切换模型${profile.models.length > 1 ? '' : ' (只有一个模型)'}`,
-            description: profile.models.length > 1 ? `当前：${modelName}` : '', action: 'switchModel'
+            label: `$(list-unordered) Switch model${profile.models.length > 1 ? '' : ' (only one model)'}`,
+            description: profile.models.length > 1 ? `Current: ${modelName}` : '', action: 'switchModel'
         },
-        { label: '$(trash) 删除', action: 'delete' }
+        { label: '$(trash) Delete', action: 'delete' }
     ];
 
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: `对 "${profile.name}" 进行操作`, ignoreFocusOut: true });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: `Actions for "${profile.name}"`, ignoreFocusOut: true });
     if (!picked) return;
 
     const actions = {
@@ -359,18 +359,18 @@ async function _selectProfileUI(context, profileID) {
 
 export async function switchApiUI(context) {
     const profiles = getAllProfile(context);
-    if (profiles.length === 0) return vscode.window.showInformationMessage('没有可用的 API 配置，请先添加 (PCPR: Add API)');
+    if (profiles.length === 0) return vscode.window.showInformationMessage('No API configuration available. Please add one first (PCPR: Add API)');
 
     const activeId = getActiveProfileID(context);
     const items = profiles.map(p => ({
         label: (p.id === activeId ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
-        description: getModelName(p) || '未选择模型',
-        detail: `${p.baseURL}  |  ${p.isLocal ? '本地' : '云端'}`,
+        description: getModelName(p) || 'No model selected',
+        detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
         profileId: p.id
     }));
 
     const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: '选择要使用的 API 配置', matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true
+        placeHolder: 'Select API configuration to use', matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true
     });
     if (picked) await activateProfile(context, picked.profileId);
 }
@@ -379,13 +379,13 @@ async function switchModelUI(context, profile) {
     const items = profile.models.map((m, i) => ({
         label: (i === profile.selectedModelIndex ? '$(circle-filled) ' : '$(circle-outline) ') + m.name, modelIndex: i
     }));
-    const picked = await vscode.window.showQuickPick(items, { placeHolder: '选择要使用的模型', ignoreFocusOut: true });
+    const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Select model to use', ignoreFocusOut: true });
     if (picked) await activateModel(context, picked.modelIndex);
 }
 
 export async function manageApisUI(context) {
     const makeItems = () => {
-        const items = [{ label: '$(add) 添加新的 API', detail: '创建一个新的 API 配置', action: 'add' }];
+        const items = [{ label: '$(add) Add new API', detail: 'Create a new API configuration', action: 'add' }];
         const profiles = getAllProfile(context);
         if (profiles.length === 0) return items;
 
@@ -394,7 +394,7 @@ export async function manageApisUI(context) {
             items.push({
                 label: (_isActive(context, p.id) ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
                 description: getModelName(p) || 'No model selected',
-                detail: `${p.baseURL}  |  ${p.isLocal ? '本地' : '云端'}`,
+                detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
                 action: 'select', profileId: p.id
             });
         }
@@ -403,7 +403,7 @@ export async function manageApisUI(context) {
 
     for (;;) {
         const picked = await vscode.window.showQuickPick(makeItems(), {
-            placeHolder: '选择一个 Profile 进行操作，或选择添加新的 API',
+            placeHolder: 'Select a profile to manage, or add a new API',
             matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true
         });
         if (!picked) return;
