@@ -41,6 +41,26 @@
       {
         "command": "pcpr.webviewChat",
         "title": "PCPR Web Chat"
+      },
+      {
+        "command": "pcpr.addApi",
+        "title": "PCPR: Add API"
+      },
+      {
+        "command": "pcpr.switchApi",
+        "title": "PCPR: Switch API"
+      },
+      {
+        "command": "pcpr.manageApis",
+        "title": "PCPR: Manage APIs"
+      },
+      {
+        "command": "pcpr.editApi",
+        "title": "PCPR: Edit API"
+      },
+      {
+        "command": "pcpr.deleteApi",
+        "title": "PCPR: Delete API"
       }
     ],
     "configuration": {
@@ -97,6 +117,10 @@
           "command": "pcpr.webviewChat",
           "title": "PCPR Web Chat",
           "when": "editorLangId != code-text-binary"
+        },
+        {
+          "command": "pcpr.manageApis",
+          "title": "PCPR Manage APIs"
         }
       ]
     }
