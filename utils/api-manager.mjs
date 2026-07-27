@@ -179,11 +179,11 @@ export async function addApiUI(context) {
     }
 
     const modelsInput = await vscode.window.showInputBox({
-        prompt: 'Enter model names (separate multiple with commas, max 3)',
+        prompt: 'Enter model names separate multiple with commas(,)',
         ignoreFocusOut: true,
         validateInput: v => {
             const m = v.split(',').map(s => s.trim()).filter(s => s);
-            return m.length === 0 ? 'Please enter at least one model name' : m.length > 3 ? 'Maximum 3 models allowed' : null;
+            return m.length === 0 ? 'Please enter at least one model name' : null;
         }
     });
     if (!modelsInput) return;
@@ -256,9 +256,9 @@ async function _editField(context, profile, field) {
         }
         case 'models': {
             const v = await vscode.window.showInputBox({
-                prompt: 'Enter model names, separated by commas (max 3)',
+                prompt: 'Enter model names, separated by commas(,)',
                 value: profile.models.map(m => m.name).join(','), ignoreFocusOut: true,
-                validateInput: v => { const m = v.split(',').map(s => s.trim()).filter(s => s); return m.length === 0 ? 'At least one model required' : m.length > 3 ? 'Max 3 models' : null; }
+                validateInput: v => { const m = v.split(',').map(s => s.trim()).filter(s => s); return m.length === 0 ? 'At least one model required' : null; }
             });
             if (v !== undefined) {
                 const newModels = v.split(',').map(s => s.trim()).filter(s => s).map(n => ({ name: n }));
