@@ -5,7 +5,7 @@ import * as userContextUtils from './utils/get-context-utils.mjs';
 import * as responseUtils from './utils/response-utils.mjs';
 import * as keyUtils from './utils/key-utils.mjs';
 import * as webviewUtils from './utils/webview-utils.mjs'
-
+import * as apiManager from './utils/api-manager.mjs';
 /**
  * @param {vscode.ExtensionContext} context
  */
@@ -102,6 +102,9 @@ async function web_main(context, input, chatHistory = [], local = false, Project
 
 var openedFiles = {};
 export async function activate(context) {
+    await apiManager.initProfiles(context);
+
+
     const workspaceFolders = vscode.workspace.workspaceFolders;
     var structure = await userContextUtils.getWorkspaceStructure(workspaceFolders);
 
@@ -302,6 +305,37 @@ export async function activate(context) {
 
     });
     context.subscriptions.push(webviewChat);
+
+
+    // 添加 API
+    const addApi = vscode.commands.registerCommand('pcpr.addApi', async function () {
+        await apiManager.addApiUI(context);
+    });
+    context.subscriptions.push(addApi);
+
+    // 切换 API
+    const switchApi = vscode.commands.registerCommand('pcpr.switchApi', async function () {
+        await apiManager.switchApiUI(context);
+    });
+    context.subscriptions.push(switchApi);
+
+    // 管理 API
+    const manageApis = vscode.commands.registerCommand('pcpr.manageApis', async function () {
+        await apiManager.manageApisUI(context);
+    });
+    context.subscriptions.push(manageApis);
+
+    // 编辑 API
+    const editApi = vscode.commands.registerCommand('pcpr.editApi', async function () {
+        await apiManager.editApiUI(context);
+    });
+    context.subscriptions.push(editApi);
+
+    // 删除 API
+    const deleteApi = vscode.commands.registerCommand('pcpr.deleteApi', async function () {
+        await apiManager.deleteApiUI(context);
+    });
+    context.subscriptions.push(deleteApi);
 }
 
 export function deactivate() { }
