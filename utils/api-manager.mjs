@@ -124,38 +124,6 @@ async function updateProfile(context, profileId, updates) {
     if (_isActive(context, profileId)) await activateProfile(context, profileId);
 }
 
-// ── Initialization / Migration ──
-
-export async function initProfiles(context) {
-    if (getAllProfile(context).length > 0) return;
-
-    const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
-    const cloudURL = config.get('cloudBaseURL', ''), cloudModel = config.get('cloudModel', '');
-    const localURL = config.get('localBaseURL', ''), localModel = config.get('localModel', '');
-    const defaults = [];
-
-    if (cloudURL || cloudModel) {
-        defaults.push({
-            id: getRandomID(), name: 'Default Cloud', baseURL: cloudURL || '',
-            models: cloudModel ? [{ name: cloudModel }] : [], selectedModelIndex: 0, isLocal: false
-        });
-    }
-    if (localURL || localModel) {
-        defaults.push({
-            id: getRandomID(), name: 'Default Local', baseURL: localURL || 'http://localhost:11434/v1/',
-            models: localModel ? [{ name: localModel }] : [], selectedModelIndex: 0, isLocal: true
-        });
-    }
-
-    if (defaults.length > 0) {
-        await saveProfiles(context, defaults);
-        await activateProfile(context, defaults[0].id);
-        vscode.window.showInformationMessage('Migrated API settings from legacy configuration');
-    } else {
-        vscode.window.showInformationMessage('Please add an API configuration first (Command: PCPR: Add API)');
-    }
-}
-
 // ── UI Components ──
 
 export async function addApiUI(context) {

@@ -45,11 +45,3 @@ export function getLocalPlanData() {
         return false;
     }
 }
-
-// Jumps to settings to modify extension configuration.
-export function modifyConfig(context) {
-    vscode.commands.executeCommand(
-        'workbench.action.openSettings',
-        'PCPR'
-    );
-}

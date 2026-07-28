@@ -31,14 +31,6 @@
         "title": "PCPR Local Check"
       },
       {
-        "command": "pcpr.setAPIKey",
-        "title": "PCPR Set API Key"
-      },
-      {
-        "command": "pcpr.clearAPIKey",
-        "title": "PCPR Clear API Key"
-      },
-      {
         "command": "pcpr.webviewChat",
         "title": "PCPR Web Chat"
       },
@@ -63,44 +55,6 @@
         "title": "PCPR: Delete API"
       }
     ],
-    "configuration": {
-      "type": "object",
-      "title": "PCPR Configuration",
-      "properties": {
-        "pcpr.apiKey": {
-          "type": "null",
-          "description": "API key for cloud plan.",
-          "markdownDescription": "**API Key Control**\n\n[Set/Update API Key](command:pcpr.setAPIKey)\n\n[Clear API Key](command:pcpr.clearAPIKey)",
-          "order": 0,
-          "scope": "application"
-        },
-        "pcpr.cloudBaseURL": {
-          "type": "string",
-          "description": "The base URL.",
-          "order": 1,
-          "scope": "application"
-        },
-        "pcpr.cloudModel": {
-          "type": "string",
-          "description": "The model used by PCPR cloud plan.",
-          "order": 2,
-          "scope": "application"
-        },
-        "pcpr.localBaseURL": {
-          "type": "string",
-          "description": "The base URL for your local model.",
-          "default": "http://localhost:11434/v1/",
-          "order": 3,
-          "scope": "application"
-        },
-        "pcpr.localModel": {
-          "type": "string",
-          "description": "The local model used by PCPR local plan.",
-          "order": 4,
-          "scope": "application"
-        }
-      }
-    },
     "menus": {
       "editor/context": [
         {

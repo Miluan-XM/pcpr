@@ -3,7 +3,6 @@ import OpenAI from 'openai';
 import * as userdataUtils from './utils/userdata-utils.mjs';
 import * as userContextUtils from './utils/get-context-utils.mjs';
 import * as responseUtils from './utils/response-utils.mjs';
-import * as keyUtils from './utils/key-utils.mjs';
 import * as webviewUtils from './utils/webview-utils.mjs'
 import * as apiManager from './utils/api-manager.mjs';
 /**
@@ -40,8 +39,7 @@ async function main(context, currentFile, local = false) {
                 // stream_options: {include_usage: true}
             });
         } else {
-            vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-            await userdataUtils.modifyConfig(context);
+            vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             return false;
         };
         return {
@@ -90,8 +88,7 @@ async function web_main(context, input, chatHistory = [], local = false, Project
                 response: completion.choices[0].message.content
             };
         } else {
-            vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-            await userdataUtils.modifyConfig(context);
+            vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             return false;
         }
     } catch (error) {
@@ -194,8 +191,7 @@ export async function activate(context) {
                 });
 
             } else {
-                vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-                await userdataUtils.modifyConfig(context);
+                vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             }
         } catch (err) {
             vscode.window.showErrorMessage(String(err));
@@ -228,8 +224,7 @@ export async function activate(context) {
                 });
 
             } else {
-                vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-                await userdataUtils.modifyConfig(context);
+                vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             }
         } catch (err) {
             vscode.window.showErrorMessage(String(err));
@@ -237,16 +232,6 @@ export async function activate(context) {
 
     })
     context.subscriptions.push(localCheck);
-
-    const setAPIKey = vscode.commands.registerCommand('pcpr.setAPIKey', async function () {
-        await keyUtils.setAPIKey(context);
-    })
-    context.subscriptions.push(setAPIKey);
-
-    const clearAPIKey = vscode.commands.registerCommand('pcpr.clearAPIKey', async function () {
-        await keyUtils.clearAPIKey(context);
-    })
-    context.subscriptions.push(clearAPIKey);
 
     const webviewChat = vscode.commands.registerCommand('pcpr.webviewChat', async function () {
         const panel = vscode.window.createWebviewPanel(
