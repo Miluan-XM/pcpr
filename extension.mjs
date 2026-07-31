@@ -3,8 +3,9 @@ import OpenAI from 'openai';
 import * as userdataUtils from './utils/userdata-utils.mjs';
 import * as userContextUtils from './utils/get-context-utils.mjs';
 import * as responseUtils from './utils/response-utils.mjs';
-import * as webviewUtils from './utils/webview-utils.mjs'
+import * as webviewUtils from './utils/webview-utils.mjs';
 import * as apiManager from './utils/api-manager.mjs';
+import * as sessionStore from './utils/session-store.mjs';
 /**
  * @param {vscode.ExtensionContext} context
  */
@@ -103,6 +104,7 @@ export async function activate(context) {
 
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
+    sessionStore.initSessions(workspaceFolders);
     var structure = await userContextUtils.getWorkspaceStructure(workspaceFolders);
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -244,8 +246,18 @@ export async function activate(context) {
             }
         );
         panel.webview.postMessage({ command: 'projectContext', data: { openedFiles } });
+        // 将会话状态发送给前端
+        const initialChatHistory = sessionStore.getActiveSessionMessages();
+        const currentSessionId = sessionStore.getActiveSessionId();
+        panel.webview.postMessage({
+            command: 'sessionState',
+            sessions: sessionStore.getSessionsList(),
+            messages: initialChatHistory,
+            activeSessionId: currentSessionId
+        });
 
-        let chatHistory = [];
+
+
         const scriptPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'main.js');
         const markedPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'marked.min.js');
         const stylePath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'css', 'style.css');
@@ -266,13 +278,35 @@ export async function activate(context) {
         panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
                 case 'chat':
-                    let totalInupt = JSON.stringify(openedFiles) + "|" + message.text;
+                    let chatHistory=sessionStore.getActiveSessionMessages();
+
+                    let totalInput = JSON.stringify(openedFiles) + "|" + message.text;
                     const useLocal = !!message.local;
-                    const response = await web_main(context, totalInupt, chatHistory, useLocal, structure);
-                    chatHistory.push({ role: 'user', content: message.text });
+                    const response = await web_main(context, totalInput, chatHistory, useLocal, structure);
+                    
+
                     if (response && response.response) {
                         chatHistory.push({ role: 'assistant', content: response.response });
                         if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+
+                        const activeSessionId=sessionStore.getActiveSessionId();
+                        sessionStore.saveMessages(activeSessionId,chatHistory);
+
+                        const userMessages=chatHistory.filter(m=>(m.role==='user'))
+                        if(userMessages.length===1){
+                            const newName=message.text.substring(0,20);
+                            sessionStore.renameSession(activeSessionId,newName);
+                            panel.webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: activeId,
+                                messages: chatHistory
+                             });
+                        }
+
+
+
+
                         panel.webview.postMessage({
                             command: 'agentResponse',
                             text: response.response,
@@ -283,6 +317,52 @@ export async function activate(context) {
                         panel.webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
                     }
                     break;
+                case 'createSession': {
+                    const newSession = sessionStore.createNewSession();
+                    const activeId = newSession.id;
+                    const messages = sessionStore.getActiveSessionMessages();
+                    panel.webview.postMessage({
+                        command: 'sessionState',
+                        sessions: sessionStore.getSessionsList(),
+                        activeSessionId: activeId,
+                        messages: messages
+                    });
+                    break;
+                }
+                case 'switchSession': {
+                    sessionStore.switchSession(message.sessionId);
+                    const activeId = sessionStore.getActiveSessionId();
+                    const messages = sessionStore.getActiveSessionMessages();
+                    panel.webview.postMessage({
+                        command: 'sessionState',
+                        sessions: sessionStore.getSessionsList(),
+                        activeSessionId: activeId,
+                        messages: messages
+                    });
+                    break;
+                }
+                case 'deleteSession': {
+                    sessionStore.deleteSession(message.sessionId);
+                    const activeId = sessionStore.getActiveSessionId();
+                    const messages = sessionStore.getActiveSessionMessages();
+                    panel.webview.postMessage({
+                        command: 'sessionState',
+                        sessions: sessionStore.getSessionsList(),
+                        activeSessionId: activeId,
+                        messages: messages
+                    });
+                    break;
+                }
+                case 'renameSession': {
+                    sessionStore.renameSession(message.sessionId, message.newName);
+                    panel.webview.postMessage({
+                        command: 'sessionState',
+                        sessions: sessionStore.getSessionsList(),
+                        activeSessionId: sessionStore.getActiveSessionId(),
+                        messages: sessionStore.getActiveSessionMessages()
+                    });
+                    break;
+                }
                 default:
                     vscode.window.showErrorMessage("Unknown command: " + message.command);
             }
