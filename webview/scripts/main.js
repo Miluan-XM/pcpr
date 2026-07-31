@@ -6,6 +6,10 @@ const localPlanToggle = document.getElementById('local-plan-toggle');
 localPlanToggle.checked = true;
 const loadingSpinner = document.getElementById('loading-spinner');
 if (loadingSpinner) loadingSpinner.style.display = 'none';
+const sessionSelector = document.getElementById('session-selector');
+const newSessionBtn = document.getElementById('new-session-btn');
+const deleteSessionBtn = document.getElementById('delete-session-btn');
+const renameSessionBtn = document.getElementById('rename-session-btn');
 
 let isStreaming = false;
 let projectContext = null;
@@ -17,6 +21,47 @@ function appendMessage(content, sender) {
     chatContainer.appendChild(msgDiv);
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
+
+function appendAssistantMessage(content) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message assistant';
+    msgDiv.innerHTML = marked.parse(content);
+    chatContainer.appendChild(msgDiv);
+}
+
+function updateSessionList(list,activeId){
+    if(!sessionSelector){
+        return;
+    }
+    sessionSelector.innerHTML='';
+    list.forEach(s => {
+        const option=document.createElement('option');
+        option.value=s.id;
+        option.textContent=s.name;
+        if(s.id===activeId){
+            option.selected=true;
+        }
+        sessionSelector.appendChild(option);
+    });
+}
+
+
+
+function loadMessages(messages){
+    const chatContainer=document.getElementById('chat-container');
+    if(!chatContainer){
+        return;
+    }
+    chatContainer.innerHTML='';
+    messages.forEach(m => {
+        if(m.role==='user'){
+            appendMessage(m.content,'user');
+        }else if(m.role==='assistant'){
+            appendAssistantMessage(m.content);
+        }
+    });
+}
+
 
 function streamAgentMessage(text) {
     let i = 0;
@@ -59,6 +104,41 @@ function streamAgentMessage(text) {
 sendBtn.addEventListener('click', () => {
     sendUserMessage();
 });
+
+newSessionBtn.addEventListener('click', function () {
+    vscode.postMessage({ command: 'createSession' });
+});
+
+deleteSessionBtn.addEventListener('click', function () {
+    const activeId = sessionSelector.value;
+    if (activeId && confirm('确定删除当前会话？')) {
+        vscode.postMessage({ command: 'deleteSession', sessionId: activeId });
+    }
+});
+
+sessionSelector.addEventListener('change', function () {
+    vscode.postMessage({ command: 'switchSession', sessionId: sessionSelector.value });
+});
+
+renameSessionBtn.addEventListener('click', function () {
+        const activeId = sessionSelector ? sessionSelector.value : null;
+        if (!activeId) {
+            return;
+        }
+
+        const selectedIndex = sessionSelector.selectedIndex;
+        const currentName = sessionSelector.options[selectedIndex].textContent;
+
+        const newName = prompt('输入新会话名称', currentName);
+
+        if (newName && newName.trim() !== '') {
+            vscode.postMessage({
+                command: 'renameSession',
+                sessionId: activeId,
+                newName: newName.trim()
+            });
+        }
+    });
 
 chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -116,6 +196,10 @@ window.addEventListener('message', event => {
                 console.error(e);
                 sendBtn.disabled = false;
             }
+            break;
+        case 'sessionState':
+            updateSessionList(message.sessions,message.activeSessionId);
+            loadMessages(message.messages);
             break;
         default:
             break;

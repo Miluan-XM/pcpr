@@ -104,7 +104,8 @@ export async function activate(context) {
 
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
-    sessionStore.initSessions(workspaceFolders);
+    const wsRoot = workspaceFolders?.[0]?.uri?.fsPath || context.extensionPath;
+    sessionStore.initSessions(wsRoot);
     var structure = await userContextUtils.getWorkspaceStructure(workspaceFolders);
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -299,7 +300,7 @@ export async function activate(context) {
                             panel.webview.postMessage({
                                 command: 'sessionState',
                                 sessions: sessionStore.getSessionsList(),
-                                activeSessionId: activeId,
+                                activeSessionId: activeSessionId,
                                 messages: chatHistory
                              });
                         }
