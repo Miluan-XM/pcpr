@@ -289,7 +289,12 @@ export async function activate(context) {
                         const response = await web_main(context, totalInput, history.slice(-20), useLocal, structure);
 
                         if (response && response.response) {
-                            history.push({ role: 'assistant', content: response.response });
+                            history.push({
+                                role: 'assistant',
+                                content: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
                             sessionStore.saveMessages(sessionId, history);
 
                             // 第一条用户消息自动作为会话名称

@@ -30,11 +30,31 @@ function appendMessage(content, sender) {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
-function appendAssistantMessage(content) {
+function formatAgentInfo(model, usage) {
+    let infoText = '';
+    if (model) infoText += `Model: ${model}`;
+    if (usage !== undefined && usage !== null) infoText += `${infoText ? ' | ' : ''}Tokens: ${usage}`;
+    return infoText;
+}
+
+function appendAssistantMessage(content, info) {
     const msgDiv = document.createElement('div');
-    msgDiv.className = 'message assistant';
-    msgDiv.innerHTML = marked.parse(content);
+    msgDiv.className = 'message agent';
+    if (info) {
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'agent-info';
+        infoDiv.textContent = info;
+        msgDiv.appendChild(infoDiv);
+    }
+    const contentDiv = document.createElement('div');
+    if (window.marked && typeof window.marked.parse === 'function') {
+        contentDiv.innerHTML = marked.parse(content);
+    } else {
+        contentDiv.textContent = content;
+    }
+    msgDiv.appendChild(contentDiv);
     chatContainer.appendChild(msgDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
 function updateSessionList(list,activeId){
@@ -65,13 +85,13 @@ function loadMessages(messages){
         if(m.role==='user'){
             appendMessage(m.content,'user');
         }else if(m.role==='assistant'){
-            appendAssistantMessage(m.content);
+            appendAssistantMessage(m.content, formatAgentInfo(m.model, m.usage));
         }
     });
 }
 
 
-function streamAgentMessage(text) {
+function streamAgentMessage(text, info) {
     let i = 0;
     isStreaming = true;
     const msgDiv = document.createElement('div');
@@ -80,9 +100,7 @@ function streamAgentMessage(text) {
     // Info container for model and usage
     const infoDiv = document.createElement('div');
     infoDiv.className = 'agent-info';
-    infoDiv.style.fontSize = '0.75em';
-    infoDiv.style.color = '#aaa';
-    infoDiv.style.marginBottom = '2px';
+    infoDiv.textContent = info || '';
     msgDiv.appendChild(infoDiv);
 
     // Content container for streaming text
@@ -173,21 +191,7 @@ window.addEventListener('message', event => {
             if (loadingSpinner) loadingSpinner.style.display = 'none';
             try {
                 if (message.text) {
-                    streamAgentMessage(message.text);
-                    // Find the last agent message and fill infoDiv
-                    setTimeout(() => {
-                        const agentMessages = chatContainer.getElementsByClassName('message agent');
-                        if (agentMessages.length > 0) {
-                            const lastAgentMsg = agentMessages[agentMessages.length - 1];
-                            const infoDiv = lastAgentMsg.querySelector('.agent-info');
-                            if (infoDiv) {
-                                let infoText = '';
-                                if (message.model) infoText += `Model: ${message.model}`;
-                                if (message.usage !== undefined) infoText += `${infoText ? ' | ' : ''}Tokens: ${message.usage}`;
-                                infoDiv.textContent = infoText;
-                            }
-                        }
-                    }, 10);
+                    streamAgentMessage(message.text, formatAgentInfo(message.model, message.usage));
                 } else {
                     sendBtn.disabled = false;
                     setSessionControlsDisabled(false);
