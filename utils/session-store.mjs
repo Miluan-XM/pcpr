@@ -6,6 +6,7 @@ const DEFAULT_SESSION_NAME = '新对话';
 
 let filePath = null;
 let cache = null;
+let currentProjectPath = null;
 
 const getRandomID = () => `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
 
@@ -16,10 +17,26 @@ function getCache() {
     } catch (error) {
         cache = {
             sessions: [],
-            activeSessionId: null
+            activeSessions: {}
         };
     }
+    if (!cache.activeSessions) {
+        cache.activeSessions = {};
+    }
+    if (!Array.isArray(cache.sessions)) {
+        cache.sessions = [];
+    }
     return cache;
+}
+
+function getProjectSessions() {
+    return cache.sessions.filter(function (s) {
+        return s.projectPath === currentProjectPath;
+    });
+}
+
+function setActiveSessionId(id) {
+    cache.activeSessions[currentProjectPath] = id;
 }
 
 function saveCache() {
@@ -28,35 +45,59 @@ function saveCache() {
     fs.writeFileSync(filePath, JSON.stringify(cache, null, 2), 'utf-8');
 }
 
-export function initSessions(workspaceRoot) {
-    filePath = path.join(workspaceRoot, FILE_NAME);
+export function initSessions(storageDir, projectPath) {
+    filePath = path.join(storageDir, FILE_NAME);
+    currentProjectPath = projectPath === undefined ? null : projectPath;
     getCache();
-    if ((!(cache.sessions)) || (cache.sessions.length === 0)) {
+
+    // 兼容旧版本数据：没有 projectPath 的会话归入当前项目
+    let migrated = false;
+    for (const s of cache.sessions) {
+        if (!s.projectPath) {
+            s.projectPath = currentProjectPath;
+            migrated = true;
+        }
+    }
+    // 兼容旧版本：activeSessionId 迁移为当前项目的激活会话
+    if (cache.activeSessionId) {
+        if (!cache.activeSessions[currentProjectPath]) {
+            cache.activeSessions[currentProjectPath] = cache.activeSessionId;
+        }
+        delete cache.activeSessionId;
+        migrated = true;
+    }
+
+    let projectSessions = getProjectSessions();
+    if (projectSessions.length === 0) {
         const newSession = {
             id: getRandomID(),
             name: DEFAULT_SESSION_NAME,
+            projectPath: currentProjectPath,
             messages: [],
             createdAt: Date.now(),
             updatedAt: Date.now()
         };
-        cache.sessions = [newSession];
-        cache.activeSessionId = newSession.id;
+        cache.sessions.push(newSession);
+        setActiveSessionId(newSession.id);
         saveCache();
     } else {
-        const validIds = cache.sessions.map(s => s.id);
-        const isLaw = validIds.includes(cache.activeSessionId);
-        if (!isLaw) {
-            cache.activeSessionId = cache.sessions[0].id;
+        const validIds = projectSessions.map(s => s.id);
+        if (!validIds.includes(cache.activeSessions[currentProjectPath])) {
+            setActiveSessionId(projectSessions[0].id);
             saveCache();
         }
+    }
+    if (migrated) {
+        saveCache();
     }
 }
 
 export function getSessionsList() {
-    const list = cache.sessions.map(function (s) {
+    const list = getProjectSessions().map(function (s) {
         return {
             id: s.id,
             name: s.name,
+            projectPath: s.projectPath,
             updatedAt: s.updatedAt,
             messageCount: s.messages.length
         };
@@ -65,11 +106,11 @@ export function getSessionsList() {
 }
 
 export function getActiveSessionId() {
-    return cache.activeSessionId;
+    return cache.activeSessions[currentProjectPath];
 }
 
 export function findSessionById(id) {
-    const session = cache.sessions.find(function (s) {
+    const session = getProjectSessions().find(function (s) {
         return s.id === id;
     });
     return session;
@@ -89,12 +130,13 @@ export function createNewSession() {
     const newSession = {
         id: getRandomID(),
         name: DEFAULT_SESSION_NAME,
+        projectPath: currentProjectPath,
         messages: [],
         createdAt: Date.now(),
         updatedAt: Date.now()
     };
     cache.sessions.push(newSession);
-    cache.activeSessionId = newSession.id;
+    setActiveSessionId(newSession.id);
     saveCache();
 
     return newSession;
@@ -106,7 +148,7 @@ export function switchSession(id) {
         console.error("No such session");
         return;
     }
-    cache.activeSessionId = id;
+    setActiveSessionId(id);
     saveCache();
 }
 
@@ -119,9 +161,10 @@ export function deleteSession(id) {
     const targetIndex = cache.sessions.indexOf(targetSession);
     cache.sessions.splice(targetIndex, 1);
 
-    if (targetSession.id === cache.activeSessionId) {
-        if (cache.sessions.length > 0) {
-            cache.activeSessionId = cache.sessions[0].id;
+    if (targetSession.id === cache.activeSessions[currentProjectPath]) {
+        const projectSessions = getProjectSessions();
+        if (projectSessions.length > 0) {
+            setActiveSessionId(projectSessions[0].id);
         } else {
             createNewSession();
         }

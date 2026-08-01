@@ -104,8 +104,9 @@ export async function activate(context) {
 
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
-    const wsRoot = workspaceFolders?.[0]?.uri?.fsPath || context.extensionPath;
-    sessionStore.initSessions(wsRoot);
+    const projectPath = workspaceFolders?.[0]?.uri?.fsPath || null;
+    // 会话数据直接存放在插件自己的目录里（不依赖 VS Code 存储 API），每个会话用 projectPath 关联项目
+    sessionStore.initSessions(context.extensionPath, projectPath);
     var structure = await userContextUtils.getWorkspaceStructure(workspaceFolders);
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
