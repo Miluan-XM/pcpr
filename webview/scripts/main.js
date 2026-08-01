@@ -13,6 +13,14 @@ const renameSessionBtn = document.getElementById('rename-session-btn');
 
 let isStreaming = false;
 let projectContext = null;
+let currentActiveSessionId = null;
+
+function setSessionControlsDisabled(disabled) {
+    sessionSelector.disabled = disabled;
+    newSessionBtn.disabled = disabled;
+    deleteSessionBtn.disabled = disabled;
+    renameSessionBtn.disabled = disabled;
+}
 
 function appendMessage(content, sender) {
     const msgDiv = document.createElement('div');
@@ -96,6 +104,7 @@ function streamAgentMessage(text) {
         } else {
             isStreaming = false;
             sendBtn.disabled = false;
+            setSessionControlsDisabled(false);
         }
     }
     typeChar();
@@ -111,7 +120,7 @@ newSessionBtn.addEventListener('click', function () {
 
 deleteSessionBtn.addEventListener('click', function () {
     const activeId = sessionSelector.value;
-    if (activeId && confirm('确定删除当前会话？')) {
+    if (activeId) {
         vscode.postMessage({ command: 'deleteSession', sessionId: activeId });
     }
 });
@@ -121,24 +130,12 @@ sessionSelector.addEventListener('change', function () {
 });
 
 renameSessionBtn.addEventListener('click', function () {
-        const activeId = sessionSelector ? sessionSelector.value : null;
-        if (!activeId) {
-            return;
-        }
-
-        const selectedIndex = sessionSelector.selectedIndex;
-        const currentName = sessionSelector.options[selectedIndex].textContent;
-
-        const newName = prompt('输入新会话名称', currentName);
-
-        if (newName && newName.trim() !== '') {
-            vscode.postMessage({
-                command: 'renameSession',
-                sessionId: activeId,
-                newName: newName.trim()
-            });
-        }
-    });
+    const activeId = sessionSelector ? sessionSelector.value : null;
+    if (!activeId) {
+        return;
+    }
+    vscode.postMessage({ command: 'renameSession', sessionId: activeId });
+});
 
 chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -150,9 +147,11 @@ chatInput.addEventListener('keydown', (e) => {
 function sendUserMessage() {
     const content = chatInput.value.trim();
     if (!content || isStreaming) return;
+    isStreaming = true;
     appendMessage(content, 'user');
     chatInput.value = '';
     sendBtn.disabled = true;
+    setSessionControlsDisabled(true);
     if (loadingSpinner) loadingSpinner.style.display = 'flex';
     const useLocal = localPlanToggle && localPlanToggle.checked;
     vscode.postMessage({ command: 'chat', text: content, local: useLocal });
@@ -191,17 +190,26 @@ window.addEventListener('message', event => {
                     }, 10);
                 } else {
                     sendBtn.disabled = false;
+                    setSessionControlsDisabled(false);
                 }
             } catch (e) {
                 console.error(e);
                 sendBtn.disabled = false;
+                setSessionControlsDisabled(false);
             }
             break;
         case 'sessionState':
-            updateSessionList(message.sessions,message.activeSessionId);
-            loadMessages(message.messages);
+            updateSessionList(message.sessions, message.activeSessionId);
+            // 只有激活会话变化时才重渲染消息，避免打断正在流式输出的回复
+            if (message.activeSessionId !== currentActiveSessionId) {
+                currentActiveSessionId = message.activeSessionId;
+                loadMessages(message.messages);
+            }
             break;
         default:
             break;
     }
 });
+
+// 通知扩展 Webview 已加载完成，扩展此时再下发初始数据
+vscode.postMessage({ command: 'ready' });

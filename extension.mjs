@@ -246,19 +246,6 @@ export async function activate(context) {
                 retainContextWhenHidden: true
             }
         );
-        panel.webview.postMessage({ command: 'projectContext', data: { openedFiles } });
-        // 将会话状态发送给前端
-        const initialChatHistory = sessionStore.getActiveSessionMessages();
-        const currentSessionId = sessionStore.getActiveSessionId();
-        panel.webview.postMessage({
-            command: 'sessionState',
-            sessions: sessionStore.getSessionsList(),
-            messages: initialChatHistory,
-            activeSessionId: currentSessionId
-        });
-
-
-
         const scriptPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'main.js');
         const markedPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'marked.min.js');
         const stylePath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'css', 'style.css');
@@ -277,95 +264,123 @@ export async function activate(context) {
         panel.webview.html = html;
 
         panel.webview.onDidReceiveMessage(async (message) => {
-            switch (message.command) {
-                case 'chat':
-                    let chatHistory=sessionStore.getActiveSessionMessages();
+            try {
+                switch (message.command) {
+                    case 'ready':
+                        // Webview 加载完成后才下发初始数据（提前 postMessage 会被丢弃）
+                        panel.webview.postMessage({ command: 'projectContext', data: { openedFiles } });
+                        panel.webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            messages: sessionStore.getActiveSessionMessages(),
+                            activeSessionId: sessionStore.getActiveSessionId()
+                        });
+                        break;
+                    case 'chat': {
+                        // 发送前快照会话，防止请求期间切换导致回复存错会话
+                        const sessionId = sessionStore.getActiveSessionId();
+                        const history = sessionStore.getActiveSessionMessages();
+                        history.push({ role: 'user', content: message.text });
 
-                    let totalInput = JSON.stringify(openedFiles) + "|" + message.text;
-                    const useLocal = !!message.local;
-                    const response = await web_main(context, totalInput, chatHistory, useLocal, structure);
-                    
+                        const totalInput = JSON.stringify(openedFiles) + "|" + message.text;
+                        const useLocal = !!message.local;
+                        // 只把最近 20 条作为模型上下文，完整历史仍全部入库
+                        const response = await web_main(context, totalInput, history.slice(-20), useLocal, structure);
 
-                    if (response && response.response) {
-                        chatHistory.push({ role: 'assistant', content: response.response });
-                        if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+                        if (response && response.response) {
+                            history.push({ role: 'assistant', content: response.response });
+                            sessionStore.saveMessages(sessionId, history);
 
-                        const activeSessionId=sessionStore.getActiveSessionId();
-                        sessionStore.saveMessages(activeSessionId,chatHistory);
+                            // 第一条用户消息自动作为会话名称
+                            const userMessages = history.filter(m => m.role === 'user');
+                            if (userMessages.length === 1) {
+                                const newName = message.text.trim().substring(0, 20);
+                                sessionStore.renameSession(sessionId, newName);
+                            }
 
-                        const userMessages=chatHistory.filter(m=>(m.role==='user'))
-                        if(userMessages.length===1){
-                            const newName=message.text.substring(0,20);
-                            sessionStore.renameSession(activeSessionId,newName);
+                            // 只刷新列表，不回传 messages，避免打断正在流式输出的回复
                             panel.webview.postMessage({
                                 command: 'sessionState',
                                 sessions: sessionStore.getSessionsList(),
-                                activeSessionId: activeSessionId,
-                                messages: chatHistory
-                             });
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                            panel.webview.postMessage({
+                                command: 'agentResponse',
+                                text: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
+                        } else {
+                            // 即使请求失败也保留用户消息
+                            sessionStore.saveMessages(sessionId, history);
+                            panel.webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
                         }
-
-
-
-
-                        panel.webview.postMessage({
-                            command: 'agentResponse',
-                            text: response.response,
-                            model: response.model,
-                            usage: response.usage
-                        });
-                    } else {
-                        panel.webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
+                        break;
                     }
-                    break;
-                case 'createSession': {
-                    const newSession = sessionStore.createNewSession();
-                    const activeId = newSession.id;
-                    const messages = sessionStore.getActiveSessionMessages();
-                    panel.webview.postMessage({
-                        command: 'sessionState',
-                        sessions: sessionStore.getSessionsList(),
-                        activeSessionId: activeId,
-                        messages: messages
-                    });
-                    break;
+                    case 'createSession': {
+                        const newSession = sessionStore.createNewSession();
+                        const messages = sessionStore.getActiveSessionMessages();
+                        panel.webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: newSession.id,
+                            messages: messages
+                        });
+                        break;
+                    }
+                    case 'switchSession': {
+                        sessionStore.switchSession(message.sessionId);
+                        panel.webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: sessionStore.getActiveSessionId(),
+                            messages: sessionStore.getActiveSessionMessages()
+                        });
+                        break;
+                    }
+                    case 'deleteSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const confirmDelete = await vscode.window.showWarningMessage(
+                            `确定删除会话「${target ? target.name : '当前会话'}」？此操作不可恢复。`,
+                            { modal: true },
+                            '删除'
+                        );
+                        if (confirmDelete === '删除') {
+                            sessionStore.deleteSession(message.sessionId);
+                            panel.webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId(),
+                                messages: sessionStore.getActiveSessionMessages()
+                            });
+                        }
+                        break;
+                    }
+                    case 'renameSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const newName = await vscode.window.showInputBox({
+                            prompt: '输入新的会话名称',
+                            value: target ? target.name : '',
+                            validateInput: (v) => (v && v.trim() !== '') ? undefined : '会话名称不能为空'
+                        });
+                        if (newName && newName.trim() !== '') {
+                            sessionStore.renameSession(message.sessionId, newName.trim());
+                            panel.webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                        }
+                        break;
+                    }
+                    default:
+                        vscode.window.showErrorMessage("Unknown command: " + message.command);
                 }
-                case 'switchSession': {
-                    sessionStore.switchSession(message.sessionId);
-                    const activeId = sessionStore.getActiveSessionId();
-                    const messages = sessionStore.getActiveSessionMessages();
-                    panel.webview.postMessage({
-                        command: 'sessionState',
-                        sessions: sessionStore.getSessionsList(),
-                        activeSessionId: activeId,
-                        messages: messages
-                    });
-                    break;
+            } catch (error) {
+                vscode.window.showErrorMessage(`Message handler error: ${String(error)}`);
+                if (message.command === 'chat') {
+                    panel.webview.postMessage({ command: 'agentResponse', text: `处理消息时出错：${String(error)}` });
                 }
-                case 'deleteSession': {
-                    sessionStore.deleteSession(message.sessionId);
-                    const activeId = sessionStore.getActiveSessionId();
-                    const messages = sessionStore.getActiveSessionMessages();
-                    panel.webview.postMessage({
-                        command: 'sessionState',
-                        sessions: sessionStore.getSessionsList(),
-                        activeSessionId: activeId,
-                        messages: messages
-                    });
-                    break;
-                }
-                case 'renameSession': {
-                    sessionStore.renameSession(message.sessionId, message.newName);
-                    panel.webview.postMessage({
-                        command: 'sessionState',
-                        sessions: sessionStore.getSessionsList(),
-                        activeSessionId: sessionStore.getActiveSessionId(),
-                        messages: sessionStore.getActiveSessionMessages()
-                    });
-                    break;
-                }
-                default:
-                    vscode.window.showErrorMessage("Unknown command: " + message.command);
             }
         });
 
