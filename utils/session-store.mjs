@@ -1,6 +1,33 @@
 import * as fs from "fs";
 import * as path from "path";
 
+/**
+ * 全局缓存对象，对应 `sessions.json` 的内存镜像。
+ * 
+ * @type {{
+ *   sessions: Array<{
+ *     id: string,
+ *     name: string,
+ *     projectPath: string | null,
+ *     messages: Array<{role: string, content: string}>,
+ *     createdAt: number,
+ *     updatedAt: number
+ *   }>,
+ *   activeSessions: { [projectPath: string]: string }
+ * }}
+ * 
+ * @property {Object[]} sessions - 所有会话实体数组
+ * @property {string} sessions[].id - 会话唯一标识
+ * @property {string} sessions[].name - 会话名称
+ * @property {string|null} sessions[].projectPath - 所属项目根目录，null 表示无工作区
+ * @property {Array} sessions[].messages - 消息历史，元素格式 {role: 'user'|'assistant', content: string}
+ * @property {number} sessions[].createdAt - 创建时间戳
+ * @property {number} sessions[].updatedAt - 最后更新时间戳
+ * @property {Object<string, string>} activeSessions - 各项目当前激活的会话 ID，键为项目路径
+ */
+
+
+
 const FILE_NAME = 'sessions.json';
 const DEFAULT_SESSION_NAME = '新对话';
 
