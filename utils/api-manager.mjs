@@ -3,9 +3,7 @@ import * as vscode from 'vscode';
 const KEYS = {
     PROFILES: 'pcpr.apiProfiles',
     ACTIVE_ID: 'pcpr.activeProfileId',
-    API_KEY: 'pcpr.apiKey',
-    API_KEY_PREFIX: 'pcpr.apiKey.',
-    CONFIG: 'pcpr'
+    API_KEY_PREFIX: 'pcpr.apiKey.'
 };
 
 const getRandomID = () => `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
@@ -54,19 +52,7 @@ async function activateProfile(context, profileId) {
     const profile = findProfile(getAllProfile(context), profileId);
     if (!profile) return vscode.window.showErrorMessage('API configuration does not exist');
 
-    const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
     const modelName = getModelName(profile);
-
-    if (profile.isLocal) {
-        await config.update('localBaseURL', profile.baseURL, vscode.ConfigurationTarget.Global);
-        await config.update('localModel', modelName, vscode.ConfigurationTarget.Global);
-    } else {
-        await config.update('cloudBaseURL', profile.baseURL, vscode.ConfigurationTarget.Global);
-        await config.update('cloudModel', modelName, vscode.ConfigurationTarget.Global);
-        const key = await getAPIKey(context, profileId);
-        key ? await context.secrets.store(KEYS.API_KEY, key) : await context.secrets.delete(KEYS.API_KEY);
-    }
-
     await context.globalState.update(KEYS.ACTIVE_ID, profileId);
     vscode.window.showInformationMessage(`Switched to: ${profile.name} / ${modelName || 'No model selected'}`);
 }
@@ -107,10 +93,6 @@ async function deleteProfile(context, profileId) {
             await activateProfile(context, profiles[0].id);
         } else {
             await context.globalState.update(KEYS.ACTIVE_ID, undefined);
-            await context.secrets.delete(KEYS.API_KEY);
-            const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
-            for (const k of ['cloudBaseURL', 'cloudModel', 'localBaseURL', 'localModel'])
-                await config.update(k, '', vscode.ConfigurationTarget.Global);
         }
     }
 }

@@ -6,9 +6,21 @@ const localPlanToggle = document.getElementById('local-plan-toggle');
 localPlanToggle.checked = true;
 const loadingSpinner = document.getElementById('loading-spinner');
 if (loadingSpinner) loadingSpinner.style.display = 'none';
+const sessionSelector = document.getElementById('session-selector');
+const newSessionBtn = document.getElementById('new-session-btn');
+const deleteSessionBtn = document.getElementById('delete-session-btn');
+const renameSessionBtn = document.getElementById('rename-session-btn');
 
 let isStreaming = false;
 let projectContext = null;
+let currentActiveSessionId = null;
+
+function setSessionControlsDisabled(disabled) {
+    sessionSelector.disabled = disabled;
+    newSessionBtn.disabled = disabled;
+    deleteSessionBtn.disabled = disabled;
+    renameSessionBtn.disabled = disabled;
+}
 
 function appendMessage(content, sender) {
     const msgDiv = document.createElement('div');
@@ -18,7 +30,68 @@ function appendMessage(content, sender) {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
-function streamAgentMessage(text) {
+function formatAgentInfo(model, usage) {
+    let infoText = '';
+    if (model) infoText += `Model: ${model}`;
+    if (usage !== undefined && usage !== null) infoText += `${infoText ? ' | ' : ''}Tokens: ${usage}`;
+    return infoText;
+}
+
+function appendAssistantMessage(content, info) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message agent';
+    if (info) {
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'agent-info';
+        infoDiv.textContent = info;
+        msgDiv.appendChild(infoDiv);
+    }
+    const contentDiv = document.createElement('div');
+    if (window.marked && typeof window.marked.parse === 'function') {
+        contentDiv.innerHTML = marked.parse(content);
+    } else {
+        contentDiv.textContent = content;
+    }
+    msgDiv.appendChild(contentDiv);
+    chatContainer.appendChild(msgDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function updateSessionList(list,activeId){
+    if(!sessionSelector){
+        return;
+    }
+    sessionSelector.innerHTML='';
+    list.forEach(s => {
+        const option=document.createElement('option');
+        option.value=s.id;
+        option.textContent=s.name;
+        if(s.id===activeId){
+            option.selected=true;
+        }
+        sessionSelector.appendChild(option);
+    });
+}
+
+
+
+function loadMessages(messages){
+    const chatContainer=document.getElementById('chat-container');
+    if(!chatContainer){
+        return;
+    }
+    chatContainer.innerHTML='';
+    messages.forEach(m => {
+        if(m.role==='user'){
+            appendMessage(m.content,'user');
+        }else if(m.role==='assistant'){
+            appendAssistantMessage(m.content, formatAgentInfo(m.model, m.usage));
+        }
+    });
+}
+
+
+function streamAgentMessage(text, info) {
     let i = 0;
     isStreaming = true;
     const msgDiv = document.createElement('div');
@@ -27,9 +100,7 @@ function streamAgentMessage(text) {
     // Info container for model and usage
     const infoDiv = document.createElement('div');
     infoDiv.className = 'agent-info';
-    infoDiv.style.fontSize = '0.75em';
-    infoDiv.style.color = '#aaa';
-    infoDiv.style.marginBottom = '2px';
+    infoDiv.textContent = info || '';
     msgDiv.appendChild(infoDiv);
 
     // Content container for streaming text
@@ -51,6 +122,7 @@ function streamAgentMessage(text) {
         } else {
             isStreaming = false;
             sendBtn.disabled = false;
+            setSessionControlsDisabled(false);
         }
     }
     typeChar();
@@ -58,6 +130,29 @@ function streamAgentMessage(text) {
 
 sendBtn.addEventListener('click', () => {
     sendUserMessage();
+});
+
+newSessionBtn.addEventListener('click', function () {
+    vscode.postMessage({ command: 'createSession' });
+});
+
+deleteSessionBtn.addEventListener('click', function () {
+    const activeId = sessionSelector.value;
+    if (activeId) {
+        vscode.postMessage({ command: 'deleteSession', sessionId: activeId });
+    }
+});
+
+sessionSelector.addEventListener('change', function () {
+    vscode.postMessage({ command: 'switchSession', sessionId: sessionSelector.value });
+});
+
+renameSessionBtn.addEventListener('click', function () {
+    const activeId = sessionSelector ? sessionSelector.value : null;
+    if (!activeId) {
+        return;
+    }
+    vscode.postMessage({ command: 'renameSession', sessionId: activeId });
 });
 
 chatInput.addEventListener('keydown', (e) => {
@@ -70,9 +165,11 @@ chatInput.addEventListener('keydown', (e) => {
 function sendUserMessage() {
     const content = chatInput.value.trim();
     if (!content || isStreaming) return;
+    isStreaming = true;
     appendMessage(content, 'user');
     chatInput.value = '';
     sendBtn.disabled = true;
+    setSessionControlsDisabled(true);
     if (loadingSpinner) loadingSpinner.style.display = 'flex';
     const useLocal = localPlanToggle && localPlanToggle.checked;
     vscode.postMessage({ command: 'chat', text: content, local: useLocal });
@@ -94,30 +191,29 @@ window.addEventListener('message', event => {
             if (loadingSpinner) loadingSpinner.style.display = 'none';
             try {
                 if (message.text) {
-                    streamAgentMessage(message.text);
-                    // Find the last agent message and fill infoDiv
-                    setTimeout(() => {
-                        const agentMessages = chatContainer.getElementsByClassName('message agent');
-                        if (agentMessages.length > 0) {
-                            const lastAgentMsg = agentMessages[agentMessages.length - 1];
-                            const infoDiv = lastAgentMsg.querySelector('.agent-info');
-                            if (infoDiv) {
-                                let infoText = '';
-                                if (message.model) infoText += `Model: ${message.model}`;
-                                if (message.usage !== undefined) infoText += `${infoText ? ' | ' : ''}Tokens: ${message.usage}`;
-                                infoDiv.textContent = infoText;
-                            }
-                        }
-                    }, 10);
+                    streamAgentMessage(message.text, formatAgentInfo(message.model, message.usage));
                 } else {
                     sendBtn.disabled = false;
+                    setSessionControlsDisabled(false);
                 }
             } catch (e) {
                 console.error(e);
                 sendBtn.disabled = false;
+                setSessionControlsDisabled(false);
+            }
+            break;
+        case 'sessionState':
+            updateSessionList(message.sessions, message.activeSessionId);
+            // 只有激活会话变化时才重渲染消息，避免打断正在流式输出的回复
+            if (message.activeSessionId !== currentActiveSessionId) {
+                currentActiveSessionId = message.activeSessionId;
+                loadMessages(message.messages);
             }
             break;
         default:
             break;
     }
 });
+
+// 通知扩展 Webview 已加载完成，扩展此时再下发初始数据
+vscode.postMessage({ command: 'ready' });
