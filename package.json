@@ -21,6 +21,7 @@
   "main": "./extension.mjs",
   "icon": "./logo.png",
   "contributes": {
+
     "commands": [
       {
         "command": "pcpr.checkCode",

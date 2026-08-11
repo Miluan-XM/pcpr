@@ -14,7 +14,7 @@ import * as sessionStore from './utils/session-store.mjs';
 // Returns Object of necessary information of AI's response on success, false on error.
 async function main(context, currentFile, local = false) {
     try {
-        const user_data = local ? userdataUtils.getLocalPlanData() : await userdataUtils.getData(context);
+        const user_data = local ? await userdataUtils.getLocalPlanData(context) : await userdataUtils.getData(context);
         const openai = new OpenAI({
             apiKey: local ? "not-needed" : user_data.apiKey,
             baseURL: user_data.baseURL
@@ -60,7 +60,7 @@ async function main(context, currentFile, local = false) {
 // Returns Object of necessary information of AI's response on success, false on error.
 async function web_main(context, input, chatHistory = [], local = false, ProjectStructure = "") {
     try {
-        const user_data = local ? userdataUtils.getLocalPlanData() : await userdataUtils.getData(context);
+        const user_data = local ? await userdataUtils.getLocalPlanData(context) : await userdataUtils.getData(context);
         const openai = new OpenAI({
             apiKey: local ? "not-needed" : user_data.apiKey,
             baseURL: user_data.baseURL
@@ -100,9 +100,6 @@ async function web_main(context, input, chatHistory = [], local = false, Project
 
 var openedFiles = {};
 export async function activate(context) {
-    await apiManager.initProfiles(context);
-
-
     const workspaceFolders = vscode.workspace.workspaceFolders;
     const projectPath = workspaceFolders?.[0]?.uri?.fsPath || null;
     // 会话数据直接存放在插件自己的目录里（不依赖 VS Code 存储 API），每个会话用 projectPath 关联项目
@@ -206,7 +203,7 @@ export async function activate(context) {
 
     const localCheck = vscode.commands.registerCommand('pcpr.localCheck', async function () {
         try {
-            const user_data = userdataUtils.getLocalPlanData();
+            const user_data = await userdataUtils.getLocalPlanData(context);
             const currentFile = userContextUtils.getContext();
             if (user_data.baseURL && user_data.model) {
                 const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
