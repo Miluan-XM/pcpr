@@ -21,6 +21,25 @@
   "main": "./extension.mjs",
   "icon": "./logo.png",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pcpr",
+          "title": "PCPR",
+          "icon": "sidebar_logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "pcpr": [
+        {
+          "type": "webview",
+          "id": "pcpr.webviewChat",
+          "name": "PCPR Chat",
+          "icon": "sidebar_logo.svg"
+        }
+      ]
+    },
 
     "commands": [
       {

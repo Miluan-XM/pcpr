@@ -98,6 +98,161 @@ async function web_main(context, input, chatHistory = [], local = false, Project
     }
 }
 
+// 侧边栏聊天视图 Provider（WebviewView），承载原 createWebviewPanel 的聊天逻辑
+class PCPRWebviewProvider {
+    constructor(context, structure) {
+        this.context = context;
+        this.structure = structure;
+    }
+
+    resolveWebviewView(webviewView) {
+        const webview = webviewView.webview;
+        webview.options = { enableScripts: true };
+
+        const scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'scripts', 'main.js');
+        const markedPath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'scripts', 'marked.min.js');
+        const stylePath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'css', 'style.css');
+        const scriptUri = webview.asWebviewUri(scriptPath).toString();
+        const markedUri = webview.asWebviewUri(markedPath).toString();
+        const styleUri = webview.asWebviewUri(stylePath).toString();
+
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src ${webview.cspSource}; style-src ${webview.cspSource};">`;
+
+        webview.html = webviewUtils.getWebPage(this.context.extensionPath, {
+            SCRIPT_URI: scriptUri,
+            MARKED_URI: markedUri,
+            STYLE_URI: styleUri,
+            CSP: cspMeta
+        });
+
+        webview.onDidReceiveMessage(async (message) => {
+            try {
+                switch (message.command) {
+                    case 'ready':
+                        // Webview 加载完成后才下发初始数据（提前 postMessage 会被丢弃）
+                        webview.postMessage({ command: 'projectContext', data: { openedFiles } });
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            messages: sessionStore.getActiveSessionMessages(),
+                            activeSessionId: sessionStore.getActiveSessionId()
+                        });
+                        break;
+                    case 'chat': {
+                        // 发送前快照会话，防止请求期间切换导致回复存错会话
+                        const sessionId = sessionStore.getActiveSessionId();
+                        const history = sessionStore.getActiveSessionMessages();
+                        history.push({ role: 'user', content: message.text });
+
+                        const totalInput = JSON.stringify(openedFiles) + "|" + message.text;
+                        const useLocal = !!message.local;
+                        // 只把最近 20 条作为模型上下文，完整历史仍全部入库
+                        const response = await web_main(this.context, totalInput, history.slice(-20), useLocal, this.structure);
+
+                        if (response && response.response) {
+                            history.push({
+                                role: 'assistant',
+                                content: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
+                            sessionStore.saveMessages(sessionId, history);
+
+                            // 第一条用户消息自动作为会话名称
+                            const userMessages = history.filter(m => m.role === 'user');
+                            if (userMessages.length === 1) {
+                                const newName = message.text.trim().substring(0, 20);
+                                sessionStore.renameSession(sessionId, newName);
+                            }
+
+                            // 只刷新列表，不回传 messages，避免打断正在流式输出的回复
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                            webview.postMessage({
+                                command: 'agentResponse',
+                                text: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
+                        } else {
+                            // 即使请求失败也保留用户消息
+                            sessionStore.saveMessages(sessionId, history);
+                            webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
+                        }
+                        break;
+                    }
+                    case 'createSession': {
+                        const newSession = sessionStore.createNewSession();
+                        const messages = sessionStore.getActiveSessionMessages();
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: newSession.id,
+                            messages: messages
+                        });
+                        break;
+                    }
+                    case 'switchSession': {
+                        sessionStore.switchSession(message.sessionId);
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: sessionStore.getActiveSessionId(),
+                            messages: sessionStore.getActiveSessionMessages()
+                        });
+                        break;
+                    }
+                    case 'deleteSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const confirmDelete = await vscode.window.showWarningMessage(
+                            `确定删除会话「${target ? target.name : '当前会话'}」？此操作不可恢复。`,
+                            { modal: true },
+                            '删除'
+                        );
+                        if (confirmDelete === '删除') {
+                            sessionStore.deleteSession(message.sessionId);
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId(),
+                                messages: sessionStore.getActiveSessionMessages()
+                            });
+                        }
+                        break;
+                    }
+                    case 'renameSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const newName = await vscode.window.showInputBox({
+                            prompt: '输入新的会话名称',
+                            value: target ? target.name : '',
+                            validateInput: (v) => (v && v.trim() !== '') ? undefined : '会话名称不能为空'
+                        });
+                        if (newName && newName.trim() !== '') {
+                            sessionStore.renameSession(message.sessionId, newName.trim());
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                        }
+                        break;
+                    }
+                    default:
+                        vscode.window.showErrorMessage("Unknown command: " + message.command);
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Message handler error: ${String(error)}`);
+                if (message.command === 'chat') {
+                    webview.postMessage({ command: 'agentResponse', text: `处理消息时出错：${String(error)}` });
+                }
+            }
+        });
+    }
+}
+
 var openedFiles = {};
 export async function activate(context) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -234,159 +389,14 @@ export async function activate(context) {
     })
     context.subscriptions.push(localCheck);
 
-    const webviewChat = vscode.commands.registerCommand('pcpr.webviewChat', async function () {
-        const panel = vscode.window.createWebviewPanel(
-            'pcprWebviewChat',
-            'PCPR Webview',
-            vscode.ViewColumn.One,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true
-            }
-        );
-        const scriptPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'main.js');
-        const markedPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'marked.min.js');
-        const stylePath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'css', 'style.css');
-        const scriptUri = panel.webview.asWebviewUri(scriptPath).toString();
-        const markedUri = panel.webview.asWebviewUri(markedPath).toString();
-        const styleUri = panel.webview.asWebviewUri(stylePath).toString();
+    // 注册侧边栏聊天视图（WebviewView）
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('pcpr.webviewChat', new PCPRWebviewProvider(context, structure))
+    );
 
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource} https: data:; script-src ${panel.webview.cspSource}; style-src ${panel.webview.cspSource};">`;
-
-        const html = webviewUtils.getWebPage(context.extensionPath, {
-            SCRIPT_URI: scriptUri,
-            MARKED_URI: markedUri,
-            STYLE_URI: styleUri,
-            CSP: cspMeta
-        });
-        panel.webview.html = html;
-
-        panel.webview.onDidReceiveMessage(async (message) => {
-            try {
-                switch (message.command) {
-                    case 'ready':
-                        // Webview 加载完成后才下发初始数据（提前 postMessage 会被丢弃）
-                        panel.webview.postMessage({ command: 'projectContext', data: { openedFiles } });
-                        panel.webview.postMessage({
-                            command: 'sessionState',
-                            sessions: sessionStore.getSessionsList(),
-                            messages: sessionStore.getActiveSessionMessages(),
-                            activeSessionId: sessionStore.getActiveSessionId()
-                        });
-                        break;
-                    case 'chat': {
-                        // 发送前快照会话，防止请求期间切换导致回复存错会话
-                        const sessionId = sessionStore.getActiveSessionId();
-                        const history = sessionStore.getActiveSessionMessages();
-                        history.push({ role: 'user', content: message.text });
-
-                        const totalInput = JSON.stringify(openedFiles) + "|" + message.text;
-                        const useLocal = !!message.local;
-                        // 只把最近 20 条作为模型上下文，完整历史仍全部入库
-                        const response = await web_main(context, totalInput, history.slice(-20), useLocal, structure);
-
-                        if (response && response.response) {
-                            history.push({
-                                role: 'assistant',
-                                content: response.response,
-                                model: response.model,
-                                usage: response.usage
-                            });
-                            sessionStore.saveMessages(sessionId, history);
-
-                            // 第一条用户消息自动作为会话名称
-                            const userMessages = history.filter(m => m.role === 'user');
-                            if (userMessages.length === 1) {
-                                const newName = message.text.trim().substring(0, 20);
-                                sessionStore.renameSession(sessionId, newName);
-                            }
-
-                            // 只刷新列表，不回传 messages，避免打断正在流式输出的回复
-                            panel.webview.postMessage({
-                                command: 'sessionState',
-                                sessions: sessionStore.getSessionsList(),
-                                activeSessionId: sessionStore.getActiveSessionId()
-                            });
-                            panel.webview.postMessage({
-                                command: 'agentResponse',
-                                text: response.response,
-                                model: response.model,
-                                usage: response.usage
-                            });
-                        } else {
-                            // 即使请求失败也保留用户消息
-                            sessionStore.saveMessages(sessionId, history);
-                            panel.webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
-                        }
-                        break;
-                    }
-                    case 'createSession': {
-                        const newSession = sessionStore.createNewSession();
-                        const messages = sessionStore.getActiveSessionMessages();
-                        panel.webview.postMessage({
-                            command: 'sessionState',
-                            sessions: sessionStore.getSessionsList(),
-                            activeSessionId: newSession.id,
-                            messages: messages
-                        });
-                        break;
-                    }
-                    case 'switchSession': {
-                        sessionStore.switchSession(message.sessionId);
-                        panel.webview.postMessage({
-                            command: 'sessionState',
-                            sessions: sessionStore.getSessionsList(),
-                            activeSessionId: sessionStore.getActiveSessionId(),
-                            messages: sessionStore.getActiveSessionMessages()
-                        });
-                        break;
-                    }
-                    case 'deleteSession': {
-                        const target = sessionStore.findSessionById(message.sessionId);
-                        const confirmDelete = await vscode.window.showWarningMessage(
-                            `确定删除会话「${target ? target.name : '当前会话'}」？此操作不可恢复。`,
-                            { modal: true },
-                            '删除'
-                        );
-                        if (confirmDelete === '删除') {
-                            sessionStore.deleteSession(message.sessionId);
-                            panel.webview.postMessage({
-                                command: 'sessionState',
-                                sessions: sessionStore.getSessionsList(),
-                                activeSessionId: sessionStore.getActiveSessionId(),
-                                messages: sessionStore.getActiveSessionMessages()
-                            });
-                        }
-                        break;
-                    }
-                    case 'renameSession': {
-                        const target = sessionStore.findSessionById(message.sessionId);
-                        const newName = await vscode.window.showInputBox({
-                            prompt: '输入新的会话名称',
-                            value: target ? target.name : '',
-                            validateInput: (v) => (v && v.trim() !== '') ? undefined : '会话名称不能为空'
-                        });
-                        if (newName && newName.trim() !== '') {
-                            sessionStore.renameSession(message.sessionId, newName.trim());
-                            panel.webview.postMessage({
-                                command: 'sessionState',
-                                sessions: sessionStore.getSessionsList(),
-                                activeSessionId: sessionStore.getActiveSessionId()
-                            });
-                        }
-                        break;
-                    }
-                    default:
-                        vscode.window.showErrorMessage("Unknown command: " + message.command);
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Message handler error: ${String(error)}`);
-                if (message.command === 'chat') {
-                    panel.webview.postMessage({ command: 'agentResponse', text: `处理消息时出错：${String(error)}` });
-                }
-            }
-        });
-
+    // 注册 webviewChat 打开 web 聊天窗口的命令
+    const webviewChat = vscode.commands.registerCommand('pcpr.webviewChat', function () {
+        vscode.commands.executeCommand('pcpr.webviewChat.focus');
     });
     context.subscriptions.push(webviewChat);
 
