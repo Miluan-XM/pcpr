@@ -2,8 +2,6 @@ const vscode = acquireVsCodeApi();
 const chatContainer = document.getElementById('chat-container');
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
-const localPlanToggle = document.getElementById('local-plan-toggle');
-localPlanToggle.checked = false;
 const loadingSpinner = document.getElementById('loading-spinner');
 if (loadingSpinner) loadingSpinner.style.display = 'none';
 const sessionSelector = document.getElementById('session-selector');
@@ -171,8 +169,7 @@ function sendUserMessage() {
     sendBtn.disabled = true;
     setSessionControlsDisabled(true);
     if (loadingSpinner) loadingSpinner.style.display = 'flex';
-    const useLocal = localPlanToggle && localPlanToggle.checked;
-    vscode.postMessage({ command: 'chat', text: content, local: useLocal });
+    vscode.postMessage({ command: 'chat', text: content });
 }
 
 window.addEventListener('message', event => {

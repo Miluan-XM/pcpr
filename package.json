@@ -40,15 +40,10 @@
         }
       ]
     },
-
     "commands": [
       {
         "command": "pcpr.checkCode",
         "title": "PCPR Check Code"
-      },
-      {
-        "command": "pcpr.localCheck",
-        "title": "PCPR Local Check"
       },
       {
         "command": "pcpr.webviewChat",
@@ -80,11 +75,6 @@
         {
           "command": "pcpr.checkCode",
           "title": "PCPR Check Code",
-          "when": "editorLangId != markdown && editorLangId != plaintext && editorLangId != ignore && editorLangId != code-text-binary"
-        },
-        {
-          "command": "pcpr.localCheck",
-          "title": "PCPR Local Check",
           "when": "editorLangId != markdown && editorLangId != plaintext && editorLangId != ignore && editorLangId != code-text-binary"
         },
         {

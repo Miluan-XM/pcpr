@@ -12,24 +12,14 @@ import * as sessionStore from './utils/session-store.mjs';
 
 // Main function to process user request through OpenAI API.
 // Returns Object of necessary information of AI's response on success, false on error.
-async function main(context, currentFile, local = false) {
+async function main(context, currentFile) {
     try {
-        const user_data = local ? await userdataUtils.getLocalPlanData(context) : await userdataUtils.getData(context);
+        const user_data = await userdataUtils.getData(context);
         const openai = new OpenAI({
-            apiKey: local ? "not-needed" : user_data.apiKey,
+            apiKey: user_data.apiKey || "not-needed",
             baseURL: user_data.baseURL
         });
-        if (local && user_data.baseURL && user_data.model) {
-            var completion = await openai.chat.completions.create({
-                model: user_data.model,
-                messages: [
-                    { "role": "system", "content": userdataUtils.getSysPrompt(context.extensionPath).system_prompt },
-                    { "role": "user", "content": currentFile.content }
-                ],
-                // stream: false,
-                // stream_options: {include_usage: true}
-            })
-        } else if (!local && user_data.baseURL && user_data.apiKey && user_data.model) {
+        if (user_data.baseURL && user_data.model) {
             var completion = await openai.chat.completions.create({
                 model: user_data.model,
                 messages: [
@@ -42,7 +32,7 @@ async function main(context, currentFile, local = false) {
         } else {
             vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             return false;
-        };
+        }
         return {
             "date": new Date().toLocaleString(),
             "file": currentFile.fileName,
@@ -58,14 +48,14 @@ async function main(context, currentFile, local = false) {
 
 // Main function to process user request from webview through OpenAI API.
 // Returns Object of necessary information of AI's response on success, false on error.
-async function web_main(context, input, chatHistory = [], local = false, ProjectStructure = "") {
+async function web_main(context, input, chatHistory = [], ProjectStructure = "") {
     try {
-        const user_data = local ? await userdataUtils.getLocalPlanData(context) : await userdataUtils.getData(context);
+        const user_data = await userdataUtils.getData(context);
         const openai = new OpenAI({
-            apiKey: local ? "not-needed" : user_data.apiKey,
+            apiKey: user_data.apiKey || "not-needed",
             baseURL: user_data.baseURL
         });
-        if (user_data.baseURL && user_data.model && (local || user_data.apiKey)) {
+        if (user_data.baseURL && user_data.model) {
             const messages = [];
             let sysPrompt = userdataUtils.getSysPrompt(context.extensionPath).system_prompt_web;
             sysPrompt += ProjectStructure ? "<c>The structure of user's project is:\n" + ProjectStructure + "</c>" : "";
@@ -145,9 +135,8 @@ class PCPRWebviewProvider {
                         history.push({ role: 'user', content: message.text });
 
                         const totalInput = JSON.stringify(openedFiles) + "|" + message.text;
-                        const useLocal = !!message.local;
                         // 只把最近 20 条作为模型上下文，完整历史仍全部入库
-                        const response = await web_main(this.context, totalInput, history.slice(-20), useLocal, this.structure);
+                        const response = await web_main(this.context, totalInput, history.slice(-20), this.structure);
 
                         if (response && response.response) {
                             history.push({
@@ -327,7 +316,7 @@ export async function activate(context) {
         try {
             const user_data = await userdataUtils.getData(context);
             const currentFile = userContextUtils.getContext();
-            if (user_data.baseURL && user_data.apiKey && user_data.model) {
+            if (user_data.baseURL && user_data.model) {
                 const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
                 statusBar.text = "$(sync-spin)PCPR: Analyzing....";
                 statusBar.show();
@@ -355,39 +344,6 @@ export async function activate(context) {
 
     })
     context.subscriptions.push(checkCode);
-
-    const localCheck = vscode.commands.registerCommand('pcpr.localCheck', async function () {
-        try {
-            const user_data = await userdataUtils.getLocalPlanData(context);
-            const currentFile = userContextUtils.getContext();
-            if (user_data.baseURL && user_data.model) {
-                const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-                statusBar.text = "$(sync-spin)PCPR: Local Analyzing....";
-                statusBar.show();
-
-                main(context, currentFile, true).then((result) => {
-                    if (result) {
-                        responseUtils.showResponse(result).then((err) => {
-                            if (err) {
-                                return;
-                            }
-                        }).catch((err) => {
-                            vscode.window.showErrorMessage(`show Error: ${String(err)}`);
-                        });
-                    }
-
-                    statusBar.hide();
-                });
-
-            } else {
-                vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
-            }
-        } catch (err) {
-            vscode.window.showErrorMessage(String(err));
-        }
-
-    })
-    context.subscriptions.push(localCheck);
 
     // 注册侧边栏聊天视图（WebviewView）
     context.subscriptions.push(

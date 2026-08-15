@@ -114,19 +114,13 @@ export async function addApiUI(context) {
     const baseURL = await vscode.window.showInputBox({ prompt: 'Enter base URL', ignoreFocusOut: true });
     if (!baseURL) return;
 
-    const typeChoice = await vscode.window.showQuickPick(
-        [{ label: 'Cloud', islocal: false }, { label: 'Local', islocal: true }],
-        { placeHolder: 'Select API type', ignoreFocusOut: true }
-    );
-    if (!typeChoice) return;
-    const isLocal = typeChoice.islocal;
-
-    let apiKey = '';
-    if (!isLocal) {
-        const keyInput = await vscode.window.showInputBox({ prompt: 'Enter API Key', password: true, ignoreFocusOut: true });
-        if (!keyInput) return;
-        apiKey = keyInput;
-    }
+    const keyInput = await vscode.window.showInputBox({
+        prompt: 'Enter API Key (leave empty for local/private endpoints)',
+        password: true,
+        ignoreFocusOut: true
+    });
+    if (keyInput === undefined) return;
+    const apiKey = keyInput.trim();
 
     const modelsInput = await vscode.window.showInputBox({
         prompt: 'Enter model names separate multiple with commas(,)',
@@ -139,9 +133,9 @@ export async function addApiUI(context) {
     if (!modelsInput) return;
 
     const models = modelsInput.split(',').map(s => s.trim()).filter(s => s).map(name => ({ name }));
-    const saved = await addProfile(context, { name, baseURL, models, selectedModelIndex: 0, isLocal });
+    const saved = await addProfile(context, { name, baseURL, models, selectedModelIndex: 0 });
 
-    if (!isLocal && apiKey) {
+    if (apiKey) {
         await saveAPIKey(context, saved.id, apiKey);
         if (_isActive(context, saved.id)) await activateProfile(context, saved.id);
     }
@@ -154,12 +148,10 @@ async function buildProfileItems(context, profile) {
         { label: `$(link) Base URL: ${profile.baseURL}`, field: 'baseURL', description: 'Change API base URL' }
     ];
 
-    if (!profile.isLocal) {
-        items.push({
-            label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? 'Set' : 'Not set'}`,
-            field: 'apiKey', description: 'Modify or set API Key'
-        });
-    }
+    items.push({
+        label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? 'Set' : 'Not set'}`,
+        field: 'apiKey', description: 'Set for cloud endpoints; leave empty for local endpoints'
+    });
 
     items.push({
         label: `$(package) Models (${profile.models.length})`,
@@ -314,7 +306,7 @@ export async function switchApiUI(context) {
     const items = profiles.map(p => ({
         label: (p.id === activeId ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
         description: getModelName(p) || 'No model selected',
-        detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
+        detail: p.baseURL,
         profileId: p.id
     }));
 
@@ -343,7 +335,7 @@ export async function manageApisUI(context) {
             items.push({
                 label: (_isActive(context, p.id) ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
                 description: getModelName(p) || 'No model selected',
-                detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
+                detail: p.baseURL,
                 action: 'select', profileId: p.id
             });
         }

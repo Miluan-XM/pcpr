@@ -12,14 +12,14 @@ export function getSysPrompt(extensionPath) {
     }
 }
 
-// Gets active cloud API configuration.
+// Gets active API configuration.
 // Returns Object of configuration, or Object with undefined fields if none is active.
 export async function getData(context) {
     try {
         const profiles = context.globalState.get('pcpr.apiProfiles', []);
         const activeId = context.globalState.get('pcpr.activeProfileId');
         const profile = profiles.find(p => p.id === activeId);
-        if (!profile || profile.isLocal) {
+        if (!profile) {
             return { baseURL: undefined, apiKey: undefined, model: undefined };
         }
         const apiKey = await context.secrets.get('pcpr.apiKey.' + profile.id);
@@ -30,26 +30,6 @@ export async function getData(context) {
         };
     } catch (err) {
         vscode.window.showErrorMessage("getData Error: " + String(err));
-        return false;
-    }
-}
-
-// Gets active local API configuration.
-// Returns Object of configuration, or Object with undefined fields if none is active.
-export async function getLocalPlanData(context) {
-    try {
-        const profiles = context.globalState.get('pcpr.apiProfiles', []);
-        const activeId = context.globalState.get('pcpr.activeProfileId');
-        const profile = profiles.find(p => p.id === activeId);
-        if (!profile || !profile.isLocal) {
-            return { baseURL: undefined, model: undefined };
-        }
-        return {
-            baseURL: profile.baseURL,
-            model: profile.models[profile.selectedModelIndex]?.name
-        };
-    } catch (err) {
-        vscode.window.showErrorMessage("getLocalPlanData Error: " + String(err));
         return false;
     }
 }
