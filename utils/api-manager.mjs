@@ -25,16 +25,12 @@ function updateProfileInOld(profile){
 
 function getAllProfile(context) {
     const profiles=context.globalState.get(KEYS.PROFILES,[]);
-    profiles.map(function(p){
-        return updateProfileInOld(p);
-    });
+    profiles.forEach(p => updateProfileInOld(p));
     return profiles;
 }
 
 async function saveProfiles(context, profiles) {
-    profiles.map(function(p){
-        return updateProfileInOld(p);
-    });
+    profiles.forEach(p => updateProfileInOld(p));
     await context.globalState.update(KEYS.PROFILES, profiles);
 }
 
