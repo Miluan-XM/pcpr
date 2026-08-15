@@ -12,11 +12,29 @@ const _isActive = (context, id) => getActiveProfileID(context) === id;
 
 // ── Data Layer ──
 
+function updateProfileInOld(profile){
+    if(profile){
+        if(typeof profile==="object"&&"isLocal" in profile){
+            delete profile.isLocal;
+        }
+    }
+    return profile;
+}
+
+
+
 function getAllProfile(context) {
-    return context.globalState.get(KEYS.PROFILES, []);
+    const profiles=context.globalState.get(KEYS.PROFILES,[]);
+    profiles.map(function(p){
+        return updateProfileInOld(p);
+    });
+    return profiles;
 }
 
 async function saveProfiles(context, profiles) {
+    profiles.map(function(p){
+        return updateProfileInOld(p);
+    });
     await context.globalState.update(KEYS.PROFILES, profiles);
 }
 
