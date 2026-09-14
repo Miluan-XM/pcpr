@@ -6,6 +6,7 @@ import * as responseUtils from './utils/response-utils.mjs';
 import * as webviewUtils from './utils/webview-utils.mjs';
 import * as apiManager from './utils/api-manager.mjs';
 import * as sessionStore from './utils/session-store.mjs';
+import * as inlineCompletionUtils from './utils/inline-completion.mjs';
 /**
  * @param {vscode.ExtensionContext} context
  */
@@ -436,6 +437,14 @@ export async function activate(context) {
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('pcpr.webviewChat', provider)
     );
+
+    // 注册 LLM 行内补全（ghost text）提供器。
+    // 项目结构取激活时快照，打开的文件列表实时读取 openedFiles。
+    inlineCompletionUtils.registerInlineCompletion(
+        context,
+        () => structure,
+        () => Object.keys(openedFiles)
+    );
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
             refreshProjectSessions();
@@ -478,6 +487,27 @@ export async function activate(context) {
         await apiManager.deleteApiUI(context);
     });
     context.subscriptions.push(deleteApi);
+
+    // 开/关行内补全
+    const toggleInlineCompletion = vscode.commands.registerCommand('pcpr.toggleInlineCompletion', async function () {
+        const config = vscode.workspace.getConfiguration('pcpr.inlineCompletion');
+        const next = !(config.get('enabled', true) !== false);
+        await config.update('enabled', next, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`PCPR inline completion ${next ? 'enabled' : 'disabled'}.`);
+    });
+    context.subscriptions.push(toggleInlineCompletion);
+
+    // 手动触发行内补全（等价于命令面板里的 "Trigger Inline Suggestion"）
+    const triggerInlineCompletion = vscode.commands.registerCommand('pcpr.triggerInlineCompletion', async function () {
+        await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+    });
+    context.subscriptions.push(triggerInlineCompletion);
+
+    // 自检：为什么没有行内补全？
+    const inlineCompletionStatus = vscode.commands.registerCommand('pcpr.inlineCompletionStatus', async function () {
+        await inlineCompletionUtils.showInlineCompletionStatus(context);
+    });
+    context.subscriptions.push(inlineCompletionStatus);
 }
 
 export function deactivate() { }

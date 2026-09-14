@@ -71,6 +71,18 @@
       {
         "command": "pcpr.deleteApi",
         "title": "PCPR: Delete API"
+      },
+      {
+        "command": "pcpr.toggleInlineCompletion",
+        "title": "PCPR: Toggle Inline Completion"
+      },
+      {
+        "command": "pcpr.triggerInlineCompletion",
+        "title": "PCPR: Trigger Inline Completion Now"
+      },
+      {
+        "command": "pcpr.inlineCompletionStatus",
+        "title": "PCPR: Inline Completion Troubleshooting"
       }
     ],
     "menus": {
@@ -88,8 +100,86 @@
         {
           "command": "pcpr.manageApis",
           "title": "PCPR Manage APIs"
+        },
+        {
+          "command": "pcpr.triggerInlineCompletion",
+          "title": "PCPR: Trigger Inline Completion Now",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "pcpr.inlineCompletionStatus",
+          "title": "PCPR: Inline Completion Troubleshooting"
         }
       ]
+    },
+    "configuration": {
+      "title": "PCPR Inline Completion",
+      "properties": {
+        "pcpr.inlineCompletion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable AI powered inline (ghost text) code completion."
+        },
+        "pcpr.inlineCompletion.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "markdownDescription": "Delay in milliseconds before an automatic completion is requested while typing. Higher values reduce the number of API calls."
+        },
+        "pcpr.inlineCompletion.maxPrefixCharacters": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 200,
+          "maximum": 40000,
+          "markdownDescription": "Maximum number of characters of the code **before** the cursor that is sent as context."
+        },
+        "pcpr.inlineCompletion.maxSuffixCharacters": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 0,
+          "maximum": 40000,
+          "markdownDescription": "Maximum number of characters of the code **after** the cursor that is sent as context."
+        },
+        "pcpr.inlineCompletion.maxCompletionLines": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 200,
+          "markdownDescription": "Maximum number of lines a single inline completion may insert."
+        },
+        "pcpr.inlineCompletion.maxTokens": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 16,
+          "maximum": 20480,
+          "markdownDescription": "Maximum number of tokens requested from the model for one inline completion. Reasoning models need a much larger budget than plain ones, otherwise they can spend all of it on hidden reasoning and return nothing."
+        },
+        "pcpr.inlineCompletion.includeProjectStructure": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send the workspace structure as additional context for inline completions."
+        },
+        "pcpr.inlineCompletion.disabledLanguages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "plaintext",
+            "log",
+            "ignore",
+            "code-text-binary",
+            "scminput",
+            "git-commit",
+            "git-rebase",
+            "diff",
+            "output",
+            "search-result"
+          ],
+          "markdownDescription": "Language ids (as reported by VS Code, e.g. `python`, `markdown`) that never receive inline completions."
+        }
+      }
     }
   },
   "scripts": {
