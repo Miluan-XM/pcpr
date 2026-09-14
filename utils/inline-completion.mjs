@@ -224,7 +224,11 @@ function buildRequest(document, position, options, deps) {
     sections.push('<code_after_cursor>' + suffix + '\n</code_after_cursor>');
     sections.push('<task>\nInsert the completion at the cursor, which is exactly the boundary between <code_before_cursor> and <code_after_cursor>. Return raw code only.\n</task>');
 
-    return { prompt: sections.join('\n\n'), prefix, suffix };
+    // True when the cursor starts a line, i.e. code_before_cursor already ends
+    // with a line break, so a leading line break in the answer is redundant.
+    const atLineStart = prefix === '' || prefix.endsWith('\n');
+
+    return { prompt: sections.join('\n\n'), prefix, suffix, atLineStart };
 }
 
 // ── Response cleanup ──
@@ -252,8 +256,10 @@ function stripPromptTags(text) {
     return kept.join('\n').replace(PROMPT_TAG_PATTERN, '').replace(/[ \t]+$/gm, '');
 }
 
-// Turn the model answer into the exact text that should be inserted.
-function sanitizeCompletion(raw, options) {
+// Turn the model answer into the exact text that should be inserted at the cursor.
+// @param {boolean} atLineStart True when the cursor is at the very beginning of a
+//   line, i.e. the text before it already ends with a line break (or is empty).
+function sanitizeCompletion(raw, options, atLineStart) {
     if (raw === null || raw === undefined) return '';
     let text = String(raw);
 
@@ -264,9 +270,22 @@ function sanitizeCompletion(raw, options) {
     // Drop anything that follows a fence (usually chatty explanation).
     text = text.replace(/\r?\n[ \t]*```[\s\S]*$/, '');
 
-    // Strip the prompt markup, then normalise the blanks it may leave behind.
+    // Strip the prompt markup.
     text = stripPromptTags(text);
-    text = text.replace(/^(?:[ \t]*\r?\n)+/, '');
+
+    // Leading blank lines.
+    if (atLineStart) {
+        // Already at the start of a line, so any leading break is redundant.
+        text = text.replace(/^(?:[ \t]*\r?\n)+/, '');
+    } else {
+        // The cursor is in the middle of a line: the model may legitimately
+        // start its answer on a new line, so keep exactly one line break and
+        // never let the new code be appended to the current line.
+        text = text.replace(/^(?:[ \t]*\r?\n)+/, '\n');
+    }
+    // Blanks that only pad an interior line are noise in a ghost text whatever
+    // the cursor position is.
+    text = text.replace(/[ \t]+(?=\r?\n)/g, '');
     text = text.replace(/[ \t]+$/, '');
 
     const lines = text.split(/\r?\n/);
@@ -276,16 +295,177 @@ function sanitizeCompletion(raw, options) {
     return text;
 }
 
-// Models sometimes restate the beginning of the current line.
+// Models sometimes restate text that is already before the cursor. Removing it
+// is what keeps the insertion anchored exactly at the cursor.
 function stripDuplicatedPrefix(completion, prefix) {
     if (!completion || !prefix) return completion;
     const lineStart = prefix.lastIndexOf('\n') + 1;
     const currentLine = prefix.slice(lineStart);
+
+    // The cursor sits at the start of a line (only the indentation is before
+    // it), so the document already provides the indentation: whatever leading
+    // whitespace the answer adds for its first line would be stacked on top of
+    // it and has to go.
+    if (currentLine.length > 0 && currentLine.trim() === '' && !/^[ \t]*\r?\n/.test(completion)) {
+        const stripped = completion.replace(/^[ \t]+/, '');
+        if (stripped !== completion) return stripped;
+        return completion;
+    }
+
+    // The model restated the whole current line from its beginning.
     if (currentLine.trim().length >= 2 && completion.startsWith(currentLine) && completion.length > currentLine.length) {
         return completion.slice(currentLine.length);
     }
     return completion;
 }
+
+// Indentation to use when a line break has to be synthesised: the current line's
+// own indentation plus (or minus) one level.
+function getIndentation(document, currentLine, deeper) {
+    const base = (currentLine.match(/^[ \t]*/) || [''])[0];
+    if (!deeper) return base;
+
+    // The options of the editor that actually shows this document are the most
+    // accurate source; fall back to the "editor" settings (which also carry the
+    // per language overrides) instead of assuming four spaces.
+    const editor = vscode.window.activeTextEditor;
+    let insertSpaces;
+    let tabSize;
+    if (editor && editor.document === document && editor.options) {
+        insertSpaces = editor.options.insertSpaces;
+        tabSize = editor.options.tabSize;
+    } else {
+        try {
+            const config = vscode.workspace.getConfiguration('editor', document);
+            insertSpaces = config.get('insertSpaces');
+            tabSize = config.get('tabSize');
+        } catch (_err) {
+            insertSpaces = undefined;
+            tabSize = undefined;
+        }
+    }
+
+    if (insertSpaces === undefined) insertSpaces = true;
+    let size = Number(tabSize);
+    if (!Number.isFinite(size) || size <= 0) size = 4;
+
+    return base + (insertSpaces ? ' '.repeat(size) : '\t');
+}
+
+// Characters that mean the answer continues the current line rather than
+// starting a new one (`int x = ` + `5`, `foo(` + `bar)`).
+const CONTINUATION_CHARS = ')]},;.+-*/%&|^=<>!?:';
+
+// Lines that end with `:` and open a body: `case 1:`, `default:`, `try:`,
+// `def f():`. A plain `a:` (key of a literal) or `cond ? a :` (ternary) is
+// deliberately not included, they continue on the same line.
+const BLOCK_LABEL_KEYWORDS = new Set([
+    'default', 'try', 'finally', 'else', 'elif', 'do',
+    'public', 'private', 'protected', 'internal', 'package'
+]);
+const BLOCK_LABEL_PREFIX = /(?:^|\s)(?:case|def|class|if|elif|for|while|with|match|except|lambda|async)\b/;
+
+function endsWithBlockLabel(line) {
+    if (!line.endsWith(':')) return false;
+    const before = line.slice(0, -1);
+    if (BLOCK_LABEL_KEYWORDS.has(before.trim())) return true;
+    return BLOCK_LABEL_PREFIX.test(before) && !before.includes('?');
+}
+
+/**
+ * Copilot style line-break decision.
+ *
+ * Models frequently forget the leading newline when the cursor sits at the end
+ * of a block opening line, which used to glue the answer onto that line. This
+ * decides, for the text at the cursor, whether the answer belongs on a new
+ * line, and returns the insertion together with the number of characters after
+ * the cursor that have to be replaced so a trailing `}` can be re-indented.
+ *
+ * A continuation in the middle of an expression (`int x = ` + `5`) or inside a
+ * call (`printf(` + `");"`) is left untouched: only a line that already ends at
+ * a block boundary (`{`, `=>`, `:` of a label, `;`, `}`) is broken.
+ *
+ * @param {string} completion Sanitised model answer.
+ * @param {string} prefix Code before the cursor.
+ * @param {string} suffix Code after the cursor.
+ * @param {vscode.TextDocument | undefined} document
+ * @returns {{ text: string, rangeLength: number }}
+ */
+function planInsertion(completion, prefix, suffix, document) {
+    const unchanged = { text: completion, rangeLength: 0 };
+    if (!completion) return unchanged;
+    // The cursor already starts a line: the model owns the line break.
+    if (prefix === '' || prefix.endsWith('\n')) return unchanged;
+
+    const currentLine = prefix.slice(prefix.lastIndexOf('\n') + 1);
+    if (currentLine.trim() === '') return unchanged;
+
+    // `\r?\n` so a CRLF document behaves exactly like an LF one.
+    const restOfLine = suffix.split(/\r?\n/, 1)[0];
+    const strippedLine = currentLine.trimEnd();
+    const firstChar = completion.trimStart()[0];
+    const hasOwnIndent = /^[ \t]/.test(completion);
+    const startsWithBreak = /^\r?\n/.test(completion);
+    // A line that opens a body, so the body belongs on the next line.
+    const opensBlock = /\{\s*$/.test(strippedLine) || /=>\s*$/.test(strippedLine) || endsWithBlockLabel(strippedLine);
+    // A line that is already finished, so anything after it starts a new line.
+    // `} else {`, `} catch (e) {` continue the very same line instead.
+    const continuesClause = /\}\s*$/.test(strippedLine) && /^(?:else|catch|finally)\b/.test(completion.trimStart());
+    const endsStatement = !continuesClause && /[;{}]\s*$/.test(strippedLine);
+    const closer = restOfLine.trim();
+    // The rest of the line only holds the closing brackets of this line.
+    const closersOnly = /^[)\]}]+;?$/.test(restOfLine.replace(/[ \t]/g, ''));
+
+    // The model started its answer on a new line even though the cursor sits in
+    // the middle of an expression (`int x = ` + `\n5`): the answer has to
+    // continue the current line instead.
+    if (startsWithBreak && !opensBlock && !endsStatement) {
+        const inline = completion.replace(/^(?:\r?\n)+[ \t]*/, '');
+        if (inline.trim() !== '') {
+            log('removed a line break that belonged to no block - the answer continues the current line');
+            return { text: inline, rangeLength: 0 };
+        }
+    }
+
+    // Nothing but blanks follow the cursor.
+    if (restOfLine.trim() === '') {
+        if (startsWithBreak) return unchanged;
+        // The model closes the very structure this line opened, so it belongs
+        // at the outer indentation instead of one level deeper.
+        const closesBlock = opensBlock && ')]}'.includes(firstChar);
+        if (!closesBlock) {
+            if (CONTINUATION_CHARS.includes(firstChar)) return unchanged;
+            if (!opensBlock && !endsStatement) return unchanged;
+        }
+
+        const indent = hasOwnIndent ? '' : getIndentation(document, currentLine, opensBlock && !closesBlock);
+        log(opensBlock ? 'inserted the missing line break before the block' : 'inserted the missing line break after the statement');
+        return { text: '\n' + indent + completion, rangeLength: 0 };
+    }
+
+    // `void f(){` + `}`: the answer goes between the brackets, and the closing
+    // bracket gets pushed onto its own line at the outer indentation.
+    if (!opensBlock || !closersOnly) return unchanged;
+
+    const endsWithCloser = completion.trimEnd().endsWith(closer);
+    let text = completion;
+    if (!startsWithBreak) {
+        const indent = hasOwnIndent ? '' : getIndentation(document, currentLine, !endsWithCloser);
+        text = '\n' + indent + text;
+    }
+    if (endsWithCloser) {
+        text = text.replace(/\s+$/, '');
+    } else {
+        if (!text.endsWith('\n')) text += '\n';
+        text += getIndentation(document, currentLine, false) + closer;
+    }
+    log(`inserted the missing line break and pushed "${closer}" onto its own line`);
+    return { text, rangeLength: restOfLine.length };
+}
+
+// Characters a model may re-emit even though the document already has them
+// right after the cursor (`int x = ` + `5;`, `foo(a` + `b)`).
+const DUPLICATED_SINGLE_CHARS = ';,)]}';
 
 // Models sometimes re-emit text that already follows the cursor, which would
 // duplicate it once the ghost text is accepted.
@@ -293,7 +473,7 @@ function stripDuplicatedPrefix(completion, prefix) {
 function stripDuplicatedSuffix(completion, suffix) {
     if (!completion || !suffix) return completion;
     let text = completion;
-    if (suffix.startsWith('\n') && text.endsWith('\n')) {
+    if (/^\r?\n/.test(suffix) && text.endsWith('\n')) {
         text = text.replace(/\n+$/, '');
     }
     const max = Math.min(text.length, suffix.length);
@@ -306,10 +486,61 @@ function stripDuplicatedSuffix(completion, suffix) {
             return stripped;
         }
     }
+
+    // A single shared character (`;`, `,`, `)` ...). It is only removed when
+    // the cursor is in the middle of a line, i.e. the character right after it
+    // belongs to the same expression, so the closing brace of a nested block
+    // that sits on a following line is never eaten.
+    const last = text.slice(-1);
+    const restOfLine = suffix.split(/\r?\n/, 1)[0];
+    if (DUPLICATED_SINGLE_CHARS.includes(last) && restOfLine.trim() !== '' && suffix.startsWith(last)) {
+        const stripped = text.slice(0, -1);
+        return stripped.trim() === '' ? '' : stripped;
+    }
     return text;
 }
 
 // ── Model request ──
+
+// A client is created per request otherwise, which allocates a new undici agent
+// on every keystroke. One client per endpoint is enough and keeps the
+// connection pool warm.
+const CLIENT_CACHE_LIMIT = 4;
+const openaiClients = new Map();
+
+// Safety net for an endpoint that accepts the connection and then never
+// answers. VS Code cancels the request on the next keystroke anyway, this only
+// covers the case where the user just waits.
+const REQUEST_TIMEOUT_MS = 30000;
+
+function getOpenAiClient(baseURL, apiKey) {
+    const key = `${baseURL}|${apiKey || ''}`;
+    const existing = openaiClients.get(key);
+    if (existing) return existing;
+    const client = new OpenAI({ apiKey: apiKey || 'not-needed', baseURL });
+    if (openaiClients.size >= CLIENT_CACHE_LIMIT) {
+        // Drop the oldest entry (Map keeps the insertion order).
+        const oldest = openaiClients.keys().next();
+        if (!oldest.done) openaiClients.delete(oldest.value);
+    }
+    openaiClients.set(key, client);
+    return client;
+}
+
+// config/system_prompt.json is read from disk on every request, which happens
+// on nearly every keystroke. Caching it briefly keeps editing the prompt file
+// live without a synchronous read per request.
+const PROMPT_CACHE_MS = 3000;
+let cachedPrompt = { at: 0, value: '' };
+
+function readInlinePrompt(context) {
+    const now = Date.now();
+    if (now - cachedPrompt.at < PROMPT_CACHE_MS) return cachedPrompt.value;
+    const sysPrompt = userdataUtils.getSysPrompt(context.extensionPath);
+    const value = (sysPrompt && (sysPrompt['inline-completion'] || sysPrompt.inline_completion)) || '';
+    cachedPrompt = { at: now, value };
+    return value;
+}
 
 async function requestCompletion(context, prompt, options, signal) {
     const userData = await userdataUtils.getData(context);
@@ -327,13 +558,9 @@ async function requestCompletion(context, prompt, options, signal) {
         return null;
     }
 
-    const openai = new OpenAI({
-        apiKey: userData.apiKey || 'not-needed',
-        baseURL: userData.baseURL
-    });
+    const openai = getOpenAiClient(userData.baseURL, userData.apiKey);
 
-    const sysPrompt = userdataUtils.getSysPrompt(context.extensionPath);
-    const systemPrompt = (sysPrompt && (sysPrompt['inline-completion'] || sysPrompt.inline_completion)) || '';
+    const systemPrompt = readInlinePrompt(context);
     if (!systemPrompt) log('warning: "inline-completion" prompt missing from config/system_prompt.json');
 
     const messages = [
@@ -352,9 +579,11 @@ async function requestCompletion(context, prompt, options, signal) {
     let answer = await createCompletion(openai, userData.model, messages, budget, signal);
 
     // A reasoning model can burn the whole max_tokens budget on its hidden
-    // reasoning and return an empty message (finish_reason "length"). Retry
-    // ONCE with a bigger budget (never more, never above MAX_TOKEN_LIMIT).
-    if (answer.content.trim() === '' && answer.finishReason === 'length' && budget < MAX_TOKEN_LIMIT) {
+    // reasoning and return an empty message (finish_reason "length", or a
+    // clean "stop" after only reasoning tokens). Retry ONCE with a bigger
+    // budget (never more, never above MAX_TOKEN_LIMIT).
+    const emptyAnswer = answer.content.trim() === '';
+    if (emptyAnswer && budget < MAX_TOKEN_LIMIT && (answer.finishReason === 'length' || answer.reasoningLength > 0)) {
         const bigger = Math.min(Math.max(budget * 4, 1024), MAX_TOKEN_LIMIT);
         log(`the model used all ${budget} tokens without producing code, retrying once with max_tokens ${bigger}`);
         answer = await createCompletion(openai, userData.model, messages, bigger, signal);
@@ -541,6 +770,17 @@ export class PCPRInlineCompletionProvider {
                 }
             });
 
+            // Give up on a request that hangs instead of holding the ghost text
+            // slot forever.
+            let requestSignal = controller.signal;
+            try {
+                if (typeof AbortSignal.timeout === 'function' && typeof AbortSignal.any === 'function') {
+                    requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+                }
+            } catch (_err) {
+                requestSignal = controller.signal;
+            }
+
             let raw;
             const request = buildRequest(document, position, options, {
                 structure: this.getStructure,
@@ -548,7 +788,7 @@ export class PCPRInlineCompletionProvider {
             });
             log(`request ${describePosition(document, position)} (${trigger}, ${request.prefix.length} chars before / ${request.suffix.length} chars after the cursor)`);
             try {
-                raw = await requestCompletion(this.context, request.prompt, options, controller.signal);
+                raw = await requestCompletion(this.context, request.prompt, options, requestSignal);
             } finally {
                 cancellation.dispose();
                 if (this.activeController === controller) this.activeController = null;
@@ -575,12 +815,15 @@ export class PCPRInlineCompletionProvider {
                 log('-> the answer hit maxTokens and may be cut off; raise pcpr.inlineCompletion.maxTokens if needed');
             }
 
-            const sanitized = sanitizeCompletion(raw.content, options);
+            const sanitized = sanitizeCompletion(raw.content, options, request.atLineStart);
             const deduplicated = stripDuplicatedPrefix(sanitized, request.prefix);
-            const completion = stripDuplicatedSuffix(deduplicated, request.suffix);
-            if (completion !== sanitized) {
-                log('-> removed text that duplicated the code around the cursor');
+            const withoutEcho = stripDuplicatedSuffix(deduplicated, request.suffix);
+            if (withoutEcho !== sanitized) {
+                log('-> removed text that repeated the code around the cursor');
             }
+
+            const plan = planInsertion(withoutEcho, request.prefix, request.suffix, document);
+            const completion = plan.text;
 
             // Completions that are only whitespace are useless.
             if (!completion || completion.trim() === '') {
@@ -589,8 +832,8 @@ export class PCPRInlineCompletionProvider {
             }
 
             log(`showing ${completion.length} chars: ${JSON.stringify(completion.slice(0, 60))}${completion.length > 60 ? '...' : ''}`);
-            this.remember(cacheKey, completion);
-            return this.buildResult(completion, position);
+            this.remember(cacheKey, plan);
+            return this.buildResult(plan, position);
         } catch (error) {
             // Cancellation is a normal outcome, never surface it as an error.
             if (isAbortError(error) || token.isCancellationRequested) {
@@ -603,9 +846,21 @@ export class PCPRInlineCompletionProvider {
         }
     }
 
-    buildResult(text, position) {
-        const range = new vscode.Range(position, position);
+    /**
+     * @param {{ text: string, rangeLength: number }} plan
+     * @param {vscode.Position} position
+     * @returns {vscode.InlineCompletionList}
+     */
+    buildResult(plan, position) {
+        const { text, rangeLength = 0 } = plan;
+        // An EMPTY range at the cursor means the text is pure insertion: it
+        // never replaces what is before the cursor. `rangeLength` is only used
+        // to re-indent a closing bracket that sits right after the cursor.
+        const end = rangeLength > 0 ? position.translate(0, rangeLength) : position;
+        const range = new vscode.Range(position, end);
         const item = new vscode.InlineCompletionItem(text, range);
+        // The provider already accounted for the typed prefix, so the answer
+        // must not be filtered out by VS Code's own prefix matching.
         item.filterText = '';
         return new vscode.InlineCompletionList([item]);
     }
