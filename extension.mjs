@@ -3,33 +3,24 @@ import OpenAI from 'openai';
 import * as userdataUtils from './utils/userdata-utils.mjs';
 import * as userContextUtils from './utils/get-context-utils.mjs';
 import * as responseUtils from './utils/response-utils.mjs';
-import * as keyUtils from './utils/key-utils.mjs';
-import * as webviewUtils from './utils/webview-utils.mjs'
+import * as webviewUtils from './utils/webview-utils.mjs';
 import * as apiManager from './utils/api-manager.mjs';
+import * as sessionStore from './utils/session-store.mjs';
+import * as inlineCompletionUtils from './utils/inline-completion.mjs';
 /**
  * @param {vscode.ExtensionContext} context
  */
 
 // Main function to process user request through OpenAI API.
 // Returns Object of necessary information of AI's response on success, false on error.
-async function main(context, currentFile, local = false) {
+async function main(context, currentFile) {
     try {
-        const user_data = local ? userdataUtils.getLocalPlanData() : await userdataUtils.getData(context);
+        const user_data = await userdataUtils.getData(context);
         const openai = new OpenAI({
-            apiKey: local ? "not-needed" : user_data.apiKey,
+            apiKey: user_data.apiKey || "not-needed",
             baseURL: user_data.baseURL
         });
-        if (local && user_data.baseURL && user_data.model) {
-            var completion = await openai.chat.completions.create({
-                model: user_data.model,
-                messages: [
-                    { "role": "system", "content": userdataUtils.getSysPrompt(context.extensionPath).system_prompt },
-                    { "role": "user", "content": currentFile.content }
-                ],
-                // stream: false,
-                // stream_options: {include_usage: true}
-            })
-        } else if (!local && user_data.baseURL && user_data.apiKey && user_data.model) {
+        if (user_data.baseURL && user_data.model) {
             var completion = await openai.chat.completions.create({
                 model: user_data.model,
                 messages: [
@@ -40,10 +31,9 @@ async function main(context, currentFile, local = false) {
                 // stream_options: {include_usage: true}
             });
         } else {
-            vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-            await userdataUtils.modifyConfig(context);
+            vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             return false;
-        };
+        }
         return {
             "date": new Date().toLocaleString(),
             "file": currentFile.fileName,
@@ -58,15 +48,16 @@ async function main(context, currentFile, local = false) {
 }
 
 // Main function to process user request from webview through OpenAI API.
-// Returns Object of necessary information of AI's response on success, false on error.
-async function web_main(context, input, chatHistory = [], local = false, ProjectStructure = "") {
+// Returns Object of necessary information of AI's response on success, false on error,
+// or { aborted: true } when the request was cancelled by the user (stop button).
+async function web_main(context, input, chatHistory = [], ProjectStructure = "", signal) {
     try {
-        const user_data = local ? userdataUtils.getLocalPlanData() : await userdataUtils.getData(context);
+        const user_data = await userdataUtils.getData(context);
         const openai = new OpenAI({
-            apiKey: local ? "not-needed" : user_data.apiKey,
+            apiKey: user_data.apiKey || "not-needed",
             baseURL: user_data.baseURL
         });
-        if (user_data.baseURL && user_data.model && (local || user_data.apiKey)) {
+        if (user_data.baseURL && user_data.model) {
             const messages = [];
             let sysPrompt = userdataUtils.getSysPrompt(context.extensionPath).system_prompt_web;
             sysPrompt += ProjectStructure ? "<c>The structure of user's project is:\n" + ProjectStructure + "</c>" : "";
@@ -78,10 +69,13 @@ async function web_main(context, input, chatHistory = [], local = false, Project
             }
             messages.push({ role: 'user', content: input });
 
-            const completion = await openai.chat.completions.create({
-                model: user_data.model,
-                messages: messages
-            });
+            const completion = await openai.chat.completions.create(
+                {
+                    model: user_data.model,
+                    messages: messages
+                },
+                signal ? { signal } : undefined
+            );
 
             return {
                 // date: new Date().toLocaleString(),
@@ -90,23 +84,254 @@ async function web_main(context, input, chatHistory = [], local = false, Project
                 response: completion.choices[0].message.content
             };
         } else {
-            vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-            await userdataUtils.modifyConfig(context);
+            vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             return false;
         }
     } catch (error) {
+        // 用户点击“停止”按钮触发的中止不应按普通错误提示
+        const errMsg = error && (error.message || String(error));
+        const isAbort = error && (error.name === 'AbortError' || error.code === 'ABORT_ERR' || /abort|cancel/i.test(String(errMsg)));
+        if (isAbort) {
+            return { aborted: true };
+        }
         vscode.window.showErrorMessage("Webview Error: " + String(error));
         return false;
     }
 }
 
+// 侧边栏聊天视图 Provider（WebviewView），承载原 createWebviewPanel 的聊天逻辑
+class PCPRWebviewProvider {
+    constructor(context, structure) {
+        this.context = context;
+        this.structure = structure;
+        this.webviewView = null;
+        // 当前 chat 请求的中止控制器（用于“停止”按钮）
+        this.pendingController = null;
+        this.stopRequested = false;
+    }
+
+    refreshSessionState() {
+        if (!this.webviewView) {
+            return;
+        }
+        this.webviewView.webview.postMessage({
+            command: 'sessionState',
+            sessions: sessionStore.getSessionsList(),
+            messages: sessionStore.getActiveSessionMessages(),
+            activeSessionId: sessionStore.getActiveSessionId()
+        });
+    }
+
+    resolveWebviewView(webviewView) {
+        this.webviewView = webviewView;
+        const webview = webviewView.webview;
+        webview.options = { enableScripts: true };
+
+        const scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'scripts', 'main.js');
+        const markedPath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'scripts', 'marked.min.js');
+        const stylePath = vscode.Uri.joinPath(this.context.extensionUri, 'webview', 'css', 'style.css');
+        const scriptUri = webview.asWebviewUri(scriptPath).toString();
+        const markedUri = webview.asWebviewUri(markedPath).toString();
+        const styleUri = webview.asWebviewUri(stylePath).toString();
+
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src ${webview.cspSource}; style-src ${webview.cspSource};">`;
+
+        webview.html = webviewUtils.getWebPage(this.context.extensionPath, {
+            SCRIPT_URI: scriptUri,
+            MARKED_URI: markedUri,
+            STYLE_URI: styleUri,
+            CSP: cspMeta
+        });
+
+        webview.onDidReceiveMessage(async (message) => {
+            try {
+                switch (message.command) {
+                    case 'ready':
+                        // Webview 加载完成后才下发初始数据（提前 postMessage 会被丢弃）
+                        webview.postMessage({ command: 'projectContext', data: { openedFiles } });
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            messages: sessionStore.getActiveSessionMessages(),
+                            activeSessionId: sessionStore.getActiveSessionId()
+                        });
+                        break;
+                    case 'chat': {
+                        // 发送前快照会话，防止请求期间切换导致回复存错会话
+                        const sessionId = sessionStore.getActiveSessionId();
+                        const history = sessionStore.getActiveSessionMessages();
+                        history.push({ role: 'user', content: message.text });
+
+                        const totalInput = JSON.stringify(openedFiles) + "|" + message.text;
+                        // 只把最近 20 条作为模型上下文，完整历史仍全部入库
+                        // 关联 AbortController，便于“停止”按钮中止本次请求
+                        this.pendingController = new AbortController();
+                        this.stopRequested = false;
+                        let response;
+                        try {
+                            response = await web_main(
+                                this.context,
+                                totalInput,
+                                history.slice(-20),
+                                this.structure,
+                                this.pendingController.signal
+                            );
+                        } finally {
+                            if (this.pendingController) {
+                                this.pendingController = null;
+                            }
+                        }
+
+                        if (response && response.aborted) {
+                            // 用户点击“停止”：保留用户消息，丢弃未完成的回复
+                            sessionStore.saveMessages(sessionId, history);
+                        } else if (response && response.response && !this.stopRequested) {
+                            history.push({
+                                role: 'assistant',
+                                content: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
+                            sessionStore.saveMessages(sessionId, history);
+
+                            // 第一条用户消息自动作为会话名称
+                            const userMessages = history.filter(m => m.role === 'user');
+                            if (userMessages.length === 1) {
+                                const newName = message.text.trim().substring(0, 20);
+                                sessionStore.renameSession(sessionId, newName);
+                            }
+
+                            // 只刷新列表，不回传 messages，避免打断正在流式输出的回复
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                            webview.postMessage({
+                                command: 'agentResponse',
+                                text: response.response,
+                                model: response.model,
+                                usage: response.usage
+                            });
+                        } else if (response && response.response && this.stopRequested) {
+                            // 竞态：完整回复到达后才收到停止指令，不渲染、不存回复
+                            sessionStore.saveMessages(sessionId, history);
+                        } else {
+                            // 即使请求失败也保留用户消息
+                            sessionStore.saveMessages(sessionId, history);
+                            webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
+                        }
+                        break;
+                    }
+                    case 'stop': {
+                        // 前端点击“停止”按钮：中止进行中的请求
+                        if (this.pendingController) {
+                            this.stopRequested = true;
+                            try {
+                                this.pendingController.abort();
+                            } catch (_err) { /* 忽略中止时的错误 */ }
+                            this.pendingController = null;
+                        }
+                        break;
+                    }
+                    case 'createSession': {
+                        const newSession = sessionStore.createNewSession();
+                        const messages = sessionStore.getActiveSessionMessages();
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: newSession.id,
+                            messages: messages
+                        });
+                        break;
+                    }
+                    case 'switchSession': {
+                        sessionStore.switchSession(message.sessionId);
+                        webview.postMessage({
+                            command: 'sessionState',
+                            sessions: sessionStore.getSessionsList(),
+                            activeSessionId: sessionStore.getActiveSessionId(),
+                            messages: sessionStore.getActiveSessionMessages()
+                        });
+                        break;
+                    }
+                    case 'deleteSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const confirmDelete = await vscode.window.showWarningMessage(
+                            `确定删除会话「${target ? target.name : '当前会话'}」？此操作不可恢复。`,
+                            { modal: true },
+                            '删除'
+                        );
+                        if (confirmDelete === '删除') {
+                            sessionStore.deleteSession(message.sessionId);
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId(),
+                                messages: sessionStore.getActiveSessionMessages()
+                            });
+                        }
+                        break;
+                    }
+                    case 'renameSession': {
+                        const target = sessionStore.findSessionById(message.sessionId);
+                        const newName = await vscode.window.showInputBox({
+                            prompt: '输入新的会话名称',
+                            value: target ? target.name : '',
+                            validateInput: (v) => (v && v.trim() !== '') ? undefined : '会话名称不能为空'
+                        });
+                        if (newName && newName.trim() !== '') {
+                            sessionStore.renameSession(message.sessionId, newName.trim());
+                            webview.postMessage({
+                                command: 'sessionState',
+                                sessions: sessionStore.getSessionsList(),
+                                activeSessionId: sessionStore.getActiveSessionId()
+                            });
+                        }
+                        break;
+                    }
+                    default:
+                        vscode.window.showErrorMessage("Unknown command: " + message.command);
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Message handler error: ${String(error)}`);
+                if (message.command === 'chat') {
+                    webview.postMessage({ command: 'agentResponse', text: `处理消息时出错：${String(error)}` });
+                }
+            }
+        });
+    }
+}
+
 var openedFiles = {};
+
+// 不应纳入项目上下文的文件（按文件名/扩展名判断）
+function shouldOmitFile(filePath) {
+    const base = String(filePath).split(/[\\/]/).pop().toLowerCase();
+    if (base === '.env' || base.startsWith('.env.')) return true;
+    const lockFiles = [
+        'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml',
+        'pnpm-lock.yml', 'composer.lock', 'gemfile.lock', 'poetry.lock',
+        'pipfile.lock', 'cargo.lock', 'flake.lock', 'bun.lockb', 'bun.lock'
+    ];
+    if (lockFiles.includes(base)) return true;
+    if (/\.(min\.js|min\.css|min\.mjs|min\.cjs|map)$/.test(base)) return true;
+    return false;
+}
+
 export async function activate(context) {
-    await apiManager.initProfiles(context);
-
-
     const workspaceFolders = vscode.workspace.workspaceFolders;
+    const projectPath = workspaceFolders?.[0]?.uri?.fsPath || null;
+    // 会话数据直接存放在插件自己的目录里（不依赖 VS Code 存储 API），每个会话用 projectPath 关联项目
+    sessionStore.initSessions(context.extensionPath, projectPath);
     var structure = await userContextUtils.getWorkspaceStructure(workspaceFolders);
+    const provider = new PCPRWebviewProvider(context, structure);
+
+    const refreshProjectSessions = () => {
+        const currentProjectPath = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || null;
+        sessionStore.initSessions(context.extensionPath, currentProjectPath);
+        provider.refreshSessionState();
+    };
 
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -124,7 +349,7 @@ export async function activate(context) {
         }
         if (count < 10) {
             const currentFile = userContextUtils.getCurrentFile();
-            if (!Object.keys(openedFiles).includes(currentFile.filePath)) {
+            if (currentFile && !shouldOmitFile(currentFile.filePath) && !Object.keys(openedFiles).includes(currentFile.filePath)) {
                 openedFiles[currentFile.filePath] = currentFile.content;
             }
         }
@@ -136,7 +361,12 @@ export async function activate(context) {
         try {
             const doc = e.document;
             if (doc && doc.uri && doc.uri.scheme === 'file' && openedFiles[doc.uri.fsPath] !== undefined) {
-                openedFiles[doc.uri.fsPath] = doc.getText();
+                // 若为过滤表文件（含升级前已缓存的历史数据），直接清除而不是更新
+                if (shouldOmitFile(doc.uri.fsPath)) {
+                    delete openedFiles[doc.uri.fsPath];
+                } else {
+                    openedFiles[doc.uri.fsPath] = doc.getText();
+                }
             }
         } catch (err) {
             vscode.window.showErrorMessage(`docChangeListener error: ${String(err)}`);
@@ -162,7 +392,7 @@ export async function activate(context) {
     try {
         for (const editor of vscode.window.visibleTextEditors) {
             const doc = editor.document;
-            if (doc && doc.uri && doc.uri.scheme === 'file' && doc.languageId !== 'markdown' && doc.languageId !== 'plaintext' && doc.languageId !== 'ignore' && doc.languageId !== 'code-text-binary' && doc.languageId !== 'log') {
+            if (doc && doc.uri && doc.uri.scheme === 'file' && !shouldOmitFile(doc.uri.fsPath) && doc.languageId !== 'markdown' && doc.languageId !== 'plaintext' && doc.languageId !== 'ignore' && doc.languageId !== 'code-text-binary' && doc.languageId !== 'log') {
                 openedFiles[doc.uri.fsPath] = doc.getText();
             }
         }
@@ -174,7 +404,7 @@ export async function activate(context) {
         try {
             const user_data = await userdataUtils.getData(context);
             const currentFile = userContextUtils.getContext();
-            if (user_data.baseURL && user_data.apiKey && user_data.model) {
+            if (user_data.baseURL && user_data.model) {
                 const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
                 statusBar.text = "$(sync-spin)PCPR: Analyzing....";
                 statusBar.show();
@@ -194,8 +424,7 @@ export async function activate(context) {
                 });
 
             } else {
-                vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-                await userdataUtils.modifyConfig(context);
+                vscode.window.showWarningMessage("API is not set, please set your APIs(PCPR: Add API)");
             }
         } catch (err) {
             vscode.window.showErrorMessage(String(err));
@@ -204,105 +433,27 @@ export async function activate(context) {
     })
     context.subscriptions.push(checkCode);
 
-    const localCheck = vscode.commands.registerCommand('pcpr.localCheck', async function () {
-        try {
-            const user_data = userdataUtils.getLocalPlanData();
-            const currentFile = userContextUtils.getContext();
-            if (user_data.baseURL && user_data.model) {
-                const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-                statusBar.text = "$(sync-spin)PCPR: Local Analyzing....";
-                statusBar.show();
+    // 注册侧边栏聊天视图（WebviewView）
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('pcpr.webviewChat', provider)
+    );
 
-                main(context, currentFile, true).then((result) => {
-                    if (result) {
-                        responseUtils.showResponse(result).then((err) => {
-                            if (err) {
-                                return;
-                            }
-                        }).catch((err) => {
-                            vscode.window.showErrorMessage(`show Error: ${String(err)}`);
-                        });
-                    }
+    // 注册 LLM 行内补全（ghost text）提供器。
+    // 项目结构取激活时快照，打开的文件列表实时读取 openedFiles。
+    inlineCompletionUtils.registerInlineCompletion(
+        context,
+        () => structure,
+        () => Object.keys(openedFiles)
+    );
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            refreshProjectSessions();
+        })
+    );
 
-                    statusBar.hide();
-                });
-
-            } else {
-                vscode.window.showWarningMessage("Configuration is not set properly. Please modify configuration.");
-                await userdataUtils.modifyConfig(context);
-            }
-        } catch (err) {
-            vscode.window.showErrorMessage(String(err));
-        }
-
-    })
-    context.subscriptions.push(localCheck);
-
-    const setAPIKey = vscode.commands.registerCommand('pcpr.setAPIKey', async function () {
-        await keyUtils.setAPIKey(context);
-    })
-    context.subscriptions.push(setAPIKey);
-
-    const clearAPIKey = vscode.commands.registerCommand('pcpr.clearAPIKey', async function () {
-        await keyUtils.clearAPIKey(context);
-    })
-    context.subscriptions.push(clearAPIKey);
-
-    const webviewChat = vscode.commands.registerCommand('pcpr.webviewChat', async function () {
-        const panel = vscode.window.createWebviewPanel(
-            'pcprWebviewChat',
-            'PCPR Webview',
-            vscode.ViewColumn.One,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true
-            }
-        );
-        panel.webview.postMessage({ command: 'projectContext', data: { openedFiles } });
-
-        let chatHistory = [];
-        const scriptPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'main.js');
-        const markedPath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'scripts', 'marked.min.js');
-        const stylePath = vscode.Uri.joinPath(context.extensionUri, 'webview', 'css', 'style.css');
-        const scriptUri = panel.webview.asWebviewUri(scriptPath).toString();
-        const markedUri = panel.webview.asWebviewUri(markedPath).toString();
-        const styleUri = panel.webview.asWebviewUri(stylePath).toString();
-
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource} https: data:; script-src ${panel.webview.cspSource}; style-src ${panel.webview.cspSource};">`;
-
-        const html = webviewUtils.getWebPage(context.extensionPath, {
-            SCRIPT_URI: scriptUri,
-            MARKED_URI: markedUri,
-            STYLE_URI: styleUri,
-            CSP: cspMeta
-        });
-        panel.webview.html = html;
-
-        panel.webview.onDidReceiveMessage(async (message) => {
-            switch (message.command) {
-                case 'chat':
-                    let totalInupt = JSON.stringify(openedFiles) + "|" + message.text;
-                    const useLocal = !!message.local;
-                    const response = await web_main(context, totalInupt, chatHistory, useLocal, structure);
-                    chatHistory.push({ role: 'user', content: message.text });
-                    if (response && response.response) {
-                        chatHistory.push({ role: 'assistant', content: response.response });
-                        if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
-                        panel.webview.postMessage({
-                            command: 'agentResponse',
-                            text: response.response,
-                            model: response.model,
-                            usage: response.usage
-                        });
-                    } else {
-                        panel.webview.postMessage({ command: 'agentResponse', text: 'Something went wrong.' });
-                    }
-                    break;
-                default:
-                    vscode.window.showErrorMessage("Unknown command: " + message.command);
-            }
-        });
-
+    // 注册 webviewChat 打开 web 聊天窗口的命令
+    const webviewChat = vscode.commands.registerCommand('pcpr.webviewChat', function () {
+        vscode.commands.executeCommand('pcpr.webviewChat.focus');
     });
     context.subscriptions.push(webviewChat);
 
@@ -336,6 +487,27 @@ export async function activate(context) {
         await apiManager.deleteApiUI(context);
     });
     context.subscriptions.push(deleteApi);
+
+    // 开/关行内补全
+    const toggleInlineCompletion = vscode.commands.registerCommand('pcpr.toggleInlineCompletion', async function () {
+        const config = vscode.workspace.getConfiguration('pcpr.inlineCompletion');
+        const next = !(config.get('enabled', true) !== false);
+        await config.update('enabled', next, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`PCPR inline completion ${next ? 'enabled' : 'disabled'}.`);
+    });
+    context.subscriptions.push(toggleInlineCompletion);
+
+    // 手动触发行内补全（等价于命令面板里的 "Trigger Inline Suggestion"）
+    const triggerInlineCompletion = vscode.commands.registerCommand('pcpr.triggerInlineCompletion', async function () {
+        await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+    });
+    context.subscriptions.push(triggerInlineCompletion);
+
+    // 自检：为什么没有行内补全？
+    const inlineCompletionStatus = vscode.commands.registerCommand('pcpr.inlineCompletionStatus', async function () {
+        await inlineCompletionUtils.showInlineCompletionStatus(context);
+    });
+    context.subscriptions.push(inlineCompletionStatus);
 }
 
 export function deactivate() { }

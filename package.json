@@ -2,7 +2,7 @@
   "name": "pcpr",
   "displayName": "Programmer Chat Programming Robot",
   "description": "A Programmer Chat Programming Robot, detecting logical errors in your code.",
-  "version": "0.0.6",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.108.1"
   },
@@ -21,26 +21,36 @@
   "main": "./extension.mjs",
   "icon": "./logo.png",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pcpr",
+          "title": "PCPR",
+          "icon": "sidebar_logo.svg",
+          "when": "workbenchState != empty"
+        }
+      ]
+    },
+    "views": {
+      "pcpr": [
+        {
+          "type": "webview",
+          "id": "pcpr.webviewChat",
+          "name": "PCPR Chat",
+          "icon": "sidebar_logo.svg",
+          "when": "workbenchState != empty"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "pcpr.checkCode",
         "title": "PCPR Check Code"
       },
       {
-        "command": "pcpr.localCheck",
-        "title": "PCPR Local Check"
-      },
-      {
-        "command": "pcpr.setAPIKey",
-        "title": "PCPR Set API Key"
-      },
-      {
-        "command": "pcpr.clearAPIKey",
-        "title": "PCPR Clear API Key"
-      },
-      {
         "command": "pcpr.webviewChat",
-        "title": "PCPR Web Chat"
+        "title": "PCPR Web Chat",
+        "when": "workbenchState != empty"
       },
       {
         "command": "pcpr.addApi",
@@ -61,58 +71,22 @@
       {
         "command": "pcpr.deleteApi",
         "title": "PCPR: Delete API"
+      },
+      {
+        "command": "pcpr.toggleInlineCompletion",
+        "title": "PCPR: Toggle Inline Completion"
+      },
+      {
+        "command": "pcpr.triggerInlineCompletion",
+        "title": "PCPR: Trigger Inline Completion Now"
+      },
+      {
+        "command": "pcpr.inlineCompletionStatus",
+        "title": "PCPR: Inline Completion Troubleshooting"
       }
     ],
-    "configuration": {
-      "type": "object",
-      "title": "PCPR Configuration",
-      "properties": {
-        "pcpr.apiKey": {
-          "type": "null",
-          "description": "API key for cloud plan.",
-          "markdownDescription": "**API Key Control**\n\n[Set/Update API Key](command:pcpr.setAPIKey)\n\n[Clear API Key](command:pcpr.clearAPIKey)",
-          "order": 0,
-          "scope": "application"
-        },
-        "pcpr.cloudBaseURL": {
-          "type": "string",
-          "description": "The base URL.",
-          "order": 1,
-          "scope": "application"
-        },
-        "pcpr.cloudModel": {
-          "type": "string",
-          "description": "The model used by PCPR cloud plan.",
-          "order": 2,
-          "scope": "application"
-        },
-        "pcpr.localBaseURL": {
-          "type": "string",
-          "description": "The base URL for your local model.",
-          "default": "http://localhost:11434/v1/",
-          "order": 3,
-          "scope": "application"
-        },
-        "pcpr.localModel": {
-          "type": "string",
-          "description": "The local model used by PCPR local plan.",
-          "order": 4,
-          "scope": "application"
-        }
-      }
-    },
     "menus": {
       "editor/context": [
-        {
-          "command": "pcpr.checkCode",
-          "title": "PCPR Check Code",
-          "when": "editorLangId != markdown && editorLangId != plaintext && editorLangId != ignore && editorLangId != code-text-binary"
-        },
-        {
-          "command": "pcpr.localCheck",
-          "title": "PCPR Local Check",
-          "when": "editorLangId != markdown && editorLangId != plaintext && editorLangId != ignore && editorLangId != code-text-binary"
-        },
         {
           "command": "pcpr.webviewChat",
           "title": "PCPR Web Chat",
@@ -121,8 +95,82 @@
         {
           "command": "pcpr.manageApis",
           "title": "PCPR Manage APIs"
+        },
+        {
+          "command": "pcpr.triggerInlineCompletion",
+          "title": "PCPR: Trigger Inline Completion Now",
+          "when": "editorTextFocus"
         }
       ]
+    },
+    "configuration": {
+      "title": "PCPR Inline Completion",
+      "properties": {
+        "pcpr.inlineCompletion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable AI powered inline (ghost text) code completion."
+        },
+        "pcpr.inlineCompletion.debounceMs": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "markdownDescription": "Delay in milliseconds before an automatic completion is requested while typing. Higher values reduce the number of API calls."
+        },
+        "pcpr.inlineCompletion.maxPrefixCharacters": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 200,
+          "maximum": 40000,
+          "markdownDescription": "Maximum number of characters of the code **before** the cursor that is sent as context."
+        },
+        "pcpr.inlineCompletion.maxSuffixCharacters": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 0,
+          "maximum": 40000,
+          "markdownDescription": "Maximum number of characters of the code **after** the cursor that is sent as context."
+        },
+        "pcpr.inlineCompletion.maxCompletionLines": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 200,
+          "markdownDescription": "Maximum number of lines a single inline completion may insert."
+        },
+        "pcpr.inlineCompletion.maxTokens": {
+          "type": "number",
+          "default": 1024,
+          "minimum": 16,
+          "maximum": 20480,
+          "markdownDescription": "Maximum number of tokens requested from the model for one inline completion. Reasoning models need a much larger budget than plain ones, otherwise they can spend all of it on hidden reasoning and return nothing."
+        },
+        "pcpr.inlineCompletion.includeProjectStructure": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send the workspace structure as additional context for inline completions."
+        },
+        "pcpr.inlineCompletion.disabledLanguages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "plaintext",
+            "log",
+            "ignore",
+            "code-text-binary",
+            "scminput",
+            "git-commit",
+            "git-rebase",
+            "diff",
+            "output",
+            "search-result"
+          ],
+          "markdownDescription": "Language ids (as reported by VS Code, e.g. `python`, `markdown`) that never receive inline completions."
+        }
+      }
     }
   },
   "scripts": {

@@ -3,9 +3,7 @@ import * as vscode from 'vscode';
 const KEYS = {
     PROFILES: 'pcpr.apiProfiles',
     ACTIVE_ID: 'pcpr.activeProfileId',
-    API_KEY: 'pcpr.apiKey',
-    API_KEY_PREFIX: 'pcpr.apiKey.',
-    CONFIG: 'pcpr'
+    API_KEY_PREFIX: 'pcpr.apiKey.'
 };
 
 const getRandomID = () => `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
@@ -14,11 +12,25 @@ const _isActive = (context, id) => getActiveProfileID(context) === id;
 
 // ── Data Layer ──
 
+function updateProfileInOld(profile){
+    if(profile){
+        if(typeof profile==="object"&&"isLocal" in profile){
+            delete profile.isLocal;
+        }
+    }
+    return profile;
+}
+
+
+
 function getAllProfile(context) {
-    return context.globalState.get(KEYS.PROFILES, []);
+    const profiles=context.globalState.get(KEYS.PROFILES,[]);
+    profiles.forEach(p => updateProfileInOld(p));
+    return profiles;
 }
 
 async function saveProfiles(context, profiles) {
+    profiles.forEach(p => updateProfileInOld(p));
     await context.globalState.update(KEYS.PROFILES, profiles);
 }
 
@@ -26,48 +38,36 @@ function getActiveProfileID(context) {
     return context.globalState.get(KEYS.ACTIVE_ID);
 }
 
-function findProfile(profiles, profileID) {
-    return profiles.find(p => p.id === profileID) || null;
+function findProfile(profiles, profileId) {
+    return profiles.find(p => p.id === profileId) || null;
 }
 
 function getActiveProfile(context) {
     return findProfile(getAllProfile(context), getActiveProfileID(context));
 }
 
-async function saveAPIKey(context, profileID, key) {
-    await context.secrets.store(KEYS.API_KEY_PREFIX + profileID, key);
+async function saveAPIKey(context, profileId, key) {
+    await context.secrets.store(KEYS.API_KEY_PREFIX + profileId, key);
 }
 
-async function getAPIKey(context, profileID) {
-    return await context.secrets.get(KEYS.API_KEY_PREFIX + profileID);
+async function getAPIKey(context, profileId) {
+    return await context.secrets.get(KEYS.API_KEY_PREFIX + profileId);
 }
 
-async function deleteAPIKey(context, profileID) {
-    await context.secrets.delete(KEYS.API_KEY_PREFIX + profileID);
+async function deleteAPIKey(context, profileId) {
+    await context.secrets.delete(KEYS.API_KEY_PREFIX + profileId);
 }
 
 
 
 // ── Core Operations ──
 
-async function activateProfile(context, profileID) {
-    const profile = findProfile(getAllProfile(context), profileID);
+async function activateProfile(context, profileId) {
+    const profile = findProfile(getAllProfile(context), profileId);
     if (!profile) return vscode.window.showErrorMessage('API configuration does not exist');
 
-    const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
     const modelName = getModelName(profile);
-
-    if (profile.isLocal) {
-        await config.update('localBaseURL', profile.baseURL, vscode.ConfigurationTarget.Global);
-        await config.update('localModel', modelName, vscode.ConfigurationTarget.Global);
-    } else {
-        await config.update('cloudBaseURL', profile.baseURL, vscode.ConfigurationTarget.Global);
-        await config.update('cloudModel', modelName, vscode.ConfigurationTarget.Global);
-        const key = await getAPIKey(context, profileID);
-        key ? await context.secrets.store(KEYS.API_KEY, key) : await context.secrets.delete(KEYS.API_KEY);
-    }
-
-    await context.globalState.update(KEYS.ACTIVE_ID, profileID);
+    await context.globalState.update(KEYS.ACTIVE_ID, profileId);
     vscode.window.showInformationMessage(`Switched to: ${profile.name} / ${modelName || 'No model selected'}`);
 }
 
@@ -92,13 +92,13 @@ async function addProfile(context, profile) {
     return profile;
 }
 
-async function deleteProfile(context, profileID) {
+async function deleteProfile(context, profileId) {
     const profiles = getAllProfile(context);
-    const idx = profiles.findIndex(p => p.id === profileID);
+    const idx = profiles.findIndex(p => p.id === profileId);
     if (idx === -1) return;
 
-    const wasActive = _isActive(context, profileID);
-    await deleteAPIKey(context, profileID);
+    const wasActive = _isActive(context, profileId);
+    await deleteAPIKey(context, profileId);
     profiles.splice(idx, 1);
     await saveProfiles(context, profiles);
 
@@ -107,53 +107,17 @@ async function deleteProfile(context, profileID) {
             await activateProfile(context, profiles[0].id);
         } else {
             await context.globalState.update(KEYS.ACTIVE_ID, undefined);
-            await context.secrets.delete(KEYS.API_KEY);
-            const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
-            for (const k of ['cloudBaseURL', 'cloudModel', 'localBaseURL', 'localModel'])
-                await config.update(k, '', vscode.ConfigurationTarget.Global);
         }
     }
 }
 
-async function updateProfile(context, profileID, updates) {
+async function updateProfile(context, profileId, updates) {
     const profiles = getAllProfile(context);
-    const target = findProfile(profiles, profileID);
+    const target = findProfile(profiles, profileId);
     if (!target) return;
     Object.assign(target, updates);
     await saveProfiles(context, profiles);
-    if (_isActive(context, profileID)) await activateProfile(context, profileID);
-}
-
-// ── Initialization / Migration ──
-
-export async function initProfiles(context) {
-    if (getAllProfile(context).length > 0) return;
-
-    const config = vscode.workspace.getConfiguration(KEYS.CONFIG);
-    const cloudURL = config.get('cloudBaseURL', ''), cloudModel = config.get('cloudModel', '');
-    const localURL = config.get('localBaseURL', ''), localModel = config.get('localModel', '');
-    const defaults = [];
-
-    if (cloudURL || cloudModel) {
-        defaults.push({
-            id: getRandomID(), name: 'Default Cloud', baseURL: cloudURL || '',
-            models: cloudModel ? [{ name: cloudModel }] : [], selectedModelIndex: 0, isLocal: false
-        });
-    }
-    if (localURL || localModel) {
-        defaults.push({
-            id: getRandomID(), name: 'Default Local', baseURL: localURL || 'http://localhost:11434/v1/',
-            models: localModel ? [{ name: localModel }] : [], selectedModelIndex: 0, isLocal: true
-        });
-    }
-
-    if (defaults.length > 0) {
-        await saveProfiles(context, defaults);
-        await activateProfile(context, defaults[0].id);
-        vscode.window.showInformationMessage('Migrated API settings from legacy configuration');
-    } else {
-        vscode.window.showInformationMessage('Please add an API configuration first (Command: PCPR: Add API)');
-    }
+    if (_isActive(context, profileId)) await activateProfile(context, profileId);
 }
 
 // ── UI Components ──
@@ -164,19 +128,13 @@ export async function addApiUI(context) {
     const baseURL = await vscode.window.showInputBox({ prompt: 'Enter base URL', ignoreFocusOut: true });
     if (!baseURL) return;
 
-    const typeChoice = await vscode.window.showQuickPick(
-        [{ label: 'Cloud', islocal: false }, { label: 'Local', islocal: true }],
-        { placeHolder: 'Select API type', ignoreFocusOut: true }
-    );
-    if (!typeChoice) return;
-    const isLocal = typeChoice.islocal;
-
-    let apiKey = '';
-    if (!isLocal) {
-        const keyInput = await vscode.window.showInputBox({ prompt: 'Enter API Key', password: true, ignoreFocusOut: true });
-        if (!keyInput) return;
-        apiKey = keyInput;
-    }
+    const keyInput = await vscode.window.showInputBox({
+        prompt: 'Enter API Key (leave empty for local/private endpoints)',
+        password: true,
+        ignoreFocusOut: true
+    });
+    if (keyInput === undefined) return;
+    const apiKey = keyInput.trim();
 
     const modelsInput = await vscode.window.showInputBox({
         prompt: 'Enter model names separate multiple with commas(,)',
@@ -189,9 +147,9 @@ export async function addApiUI(context) {
     if (!modelsInput) return;
 
     const models = modelsInput.split(',').map(s => s.trim()).filter(s => s).map(name => ({ name }));
-    const saved = await addProfile(context, { name, baseURL, models, selectedModelIndex: 0, isLocal });
+    const saved = await addProfile(context, { name, baseURL, models, selectedModelIndex: 0 });
 
-    if (!isLocal && apiKey) {
+    if (apiKey) {
         await saveAPIKey(context, saved.id, apiKey);
         if (_isActive(context, saved.id)) await activateProfile(context, saved.id);
     }
@@ -204,12 +162,10 @@ async function buildProfileItems(context, profile) {
         { label: `$(link) Base URL: ${profile.baseURL}`, field: 'baseURL', description: 'Change API base URL' }
     ];
 
-    if (!profile.isLocal) {
-        items.push({
-            label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? 'Set' : 'Not set'}`,
-            field: 'apiKey', description: 'Modify or set API Key'
-        });
-    }
+    items.push({
+        label: `$(key) API Key: ${(await getAPIKey(context, profile.id)) ? 'Set' : 'Not set'}`,
+        field: 'apiKey', description: 'Set for cloud endpoints; leave empty for local endpoints'
+    });
 
     items.push({
         label: `$(package) Models (${profile.models.length})`,
@@ -253,7 +209,7 @@ async function _editField(context, profile, field) {
                 if (_isActive(context, profile.id)) await activateProfile(context, profile.id);
             }
             break;
-        }
+        };
         case 'models': {
             const v = await vscode.window.showInputBox({
                 prompt: 'Enter model names, separated by commas(,)',
@@ -283,20 +239,20 @@ async function _editField(context, profile, field) {
     if (ok[field]) vscode.window.showInformationMessage(ok[field]);
 }
 
-export async function editApiUI(context, profileID) {
+export async function editApiUI(context, profileId) {
     const profiles = getAllProfile(context);
     if (profiles.length === 0) return vscode.window.showInformationMessage('No API configuration to edit');
 
-    if (!profileID) {
+    if (!profileId) {
         const picked = await vscode.window.showQuickPick(
-            profiles.map(p => ({ label: p.name, description: p.baseURL, profileID: p.id })),
+            profiles.map(p => ({ label: p.name, description: p.baseURL, profileId: p.id })),
             { placeHolder: 'Select API configuration to edit', ignoreFocusOut: true }
-        );
+        )
         if (!picked) return;
-        profileID = picked.profileID;
+        profileId = picked.profileId;
     }
 
-    const profile = findProfile(profiles, profileID);
+    const profile = findProfile(profiles, profileId);
     if (!profile) return vscode.window.showErrorMessage('API configuration not found');
 
     const items = await buildProfileItems(context, profile);
@@ -331,12 +287,11 @@ export async function deleteApiUI(context, profileId) {
     vscode.window.showInformationMessage('Deleted: ' + p.name);
 }
 
-async function _selectProfileUI(context, profileID) {
-    const profile = findProfile(getAllProfile(context), profileID);
+async function _selectProfileUI(context, profileId) {
+    const profile = findProfile(getAllProfile(context), profileId);
     const modelName = getModelName(profile);
 
     const items = [
-        { label: '$(arrow-right) Switch to this API', action: 'activate' },
         { label: '$(edit) Edit', action: 'edit' },
         {
             label: `$(list-unordered) Switch model${profile.models.length > 1 ? '' : ' (only one model)'}`,
@@ -349,7 +304,7 @@ async function _selectProfileUI(context, profileID) {
     if (!picked) return;
 
     const actions = {
-        activate: () => activateProfile(context, profileID),
+        // activate: () => activateProfile(context, profileId),
         edit: () => editApiUI(context, profile.id),
         switchModel: () => switchModelUI(context, profile),
         delete: () => deleteApiUI(context, profile.id)
@@ -365,7 +320,7 @@ export async function switchApiUI(context) {
     const items = profiles.map(p => ({
         label: (p.id === activeId ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
         description: getModelName(p) || 'No model selected',
-        detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
+        detail: p.baseURL,
         profileId: p.id
     }));
 
@@ -394,14 +349,14 @@ export async function manageApisUI(context) {
             items.push({
                 label: (_isActive(context, p.id) ? '$(circle-filled) ' : '$(circle-outline) ') + p.name,
                 description: getModelName(p) || 'No model selected',
-                detail: `${p.baseURL}  |  ${p.isLocal ? 'Local' : 'Cloud'}`,
+                detail: p.baseURL,
                 action: 'select', profileId: p.id
             });
         }
         return items;
     };
 
-    for (;;) {
+    while (true) {
         const picked = await vscode.window.showQuickPick(makeItems(), {
             placeHolder: 'Select a profile to manage, or add a new API',
             matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true
@@ -409,7 +364,11 @@ export async function manageApisUI(context) {
         if (!picked) return;
         if (picked.action === 'add') { await addApiUI(context); continue; }
         if (picked.action === 'sep') continue;
-        if (picked.action === 'select') { await _selectProfileUI(context, picked.profileId); continue; }
+        if (picked.action === 'select') {
+            await activateProfile(context, picked.profileId);
+            await _selectProfileUI(context, picked.profileId);
+            continue;
+        };
     }
 }
 

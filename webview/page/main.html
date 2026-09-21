@@ -10,7 +10,18 @@
 </head>
 
 <body>
-    <div class="header">PCPR Webview</div>
+    <div class="header">
+        <div class="header-title">PCPR Webview</div>
+        <div class="session-bar">
+            <select id="session-selector"></select>
+            <button id="new-session-btn" title="新建会话">＋</button>
+            <button id="delete-session-btn" title="删除会话">−</button>
+            <button id="rename-session-btn" title="重命名会话">✎</button>
+        </div>
+    </div>
+    
+
+
     <div class="chat-container" id="chat-container">
         <!-- Messages will be dynamically inserted here -->
     </div>
@@ -20,10 +31,7 @@
         </div>
         <input type="text" id="chat-input" placeholder="Type your message..." autocomplete="off" />
         <button id="send-btn">Send</button>
-        <div class="plan-toggle" style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
-            <input type="checkbox" id="local-plan-toggle" />
-            <label for="local-plan-toggle">Local Plan</label>
-        </div>
+        <button id="stop-btn">Stop</button>
     </div>
     <script src="%MARKED_URI%"></script>
     <script src="%SCRIPT_URI%"></script>
