@@ -2,7 +2,7 @@
   "name": "pcpr",
   "displayName": "Programmer Chat Programming Robot",
   "description": "A Programmer Chat Programming Robot, detecting logical errors in your code.",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.108.1"
   },
@@ -88,11 +88,6 @@
     "menus": {
       "editor/context": [
         {
-          "command": "pcpr.checkCode",
-          "title": "PCPR Check Code",
-          "when": "editorLangId != markdown && editorLangId != plaintext && editorLangId != ignore && editorLangId != code-text-binary"
-        },
-        {
           "command": "pcpr.webviewChat",
           "title": "PCPR Web Chat",
           "when": "editorLangId != code-text-binary"
@@ -105,10 +100,6 @@
           "command": "pcpr.triggerInlineCompletion",
           "title": "PCPR: Trigger Inline Completion Now",
           "when": "editorTextFocus"
-        },
-        {
-          "command": "pcpr.inlineCompletionStatus",
-          "title": "PCPR: Inline Completion Troubleshooting"
         }
       ]
     },
