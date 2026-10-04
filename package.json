@@ -100,6 +100,16 @@
           "command": "pcpr.triggerInlineCompletion",
           "title": "PCPR: Trigger Inline Completion Now",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "pcpr.toggleInlineCompletion",
+          "title": "PCPR: Inline Completion On (click to disable)",
+          "when": "editorTextFocus && config.pcpr.inlineCompletion.enabled"
+        },
+        {
+          "command": "pcpr.toggleInlineCompletion",
+          "title": "PCPR: Inline Completion Off (click to enable)",
+          "when": "editorTextFocus && !config.pcpr.inlineCompletion.enabled"
         }
       ]
     },

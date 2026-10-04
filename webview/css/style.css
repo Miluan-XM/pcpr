@@ -1,8 +1,29 @@
-/* PCPR Chat Webview Styles */
+/* PCPR Chat Webview Styles
+ *
+ * 主题适配（本次修改）：所有硬编码颜色统一改写为 VSCode webview 注入的主题变量，
+ * 形式为 var(--vscode-<主题色>, <原硬编码色>)。主题未定义该变量时回退到原色，
+ * 因此在旧主题 / 自定义主题下视觉不会退化；在标准主题下则自动跟随 VSCode 配色。
+ * 未删除、未改写任何布局/结构声明，也未改动选择器与 DOM 结构。
+ *
+ * 变量对照（按出现顺序）：
+ *   body 背景        --vscode-sideBar-background            (#1e1e1e)
+ *   body 前景        --vscode-foreground                    (#d4d4d4)
+ *   header 背景      --vscode-sideBarSectionHeader-background (#252526)
+ *   分隔线           --vscode-panel-border                  (#333)
+ *   下拉框           --vscode-dropdown-* / --vscode-input-* (#1e1e1e/#d4d4d4/#333)
+ *   工具栏按钮       --vscode-button-secondary* / --vscode-button-* (#2d2d2d/#444/#d4d4d4/#007acc/#fff)
+ *   聊天气泡(用户)   --vscode-button-background/-foreground  (#007acc/#fff)
+ *   聊天气泡(助手)   --vscode-editorWidget-background / --vscode-foreground (#2d2d2d/#d4d4d4)
+ *   输入区/停止按钮  --vscode-sideBarSectionHeader-background / --vscode-statusBarItem-error* (#c42b1c/#e0553f)
+ *   输入框           --vscode-input-background/-foreground  (#1e1e1e/#d4d4d4)
+ *   spinner          --vscode-editorWidget-border / --vscode-progressBar-background (#252526/#007acc)
+ *   次要文字         --vscode-descriptionForeground         (#aaa)
+ *   滚动条           --vscode-scrollbarSlider-*             (#333)
+ */
 body {
     font-family: 'Segoe UI', Arial, sans-serif;
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: var(--vscode-sideBar-background, #1e1e1e);
+    color: var(--vscode-foreground, #d4d4d4);
     margin: 0;
     padding: 0;
     min-height: 100vh;
@@ -13,12 +34,12 @@ body {
 /* ==================== Header 与会话工具栏 ==================== */
 
 .header {
-    background: #252526;
+    background: var(--vscode-sideBarSectionHeader-background, #252526);
     padding: 12px 16px;
     font-size: 1.2em;
     font-weight: bold;
     text-align: center;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--vscode-panel-border, #333);
     display: flex;
     flex-direction: column;   /* 标题在上，工具栏在下 */
     gap: 8px;
@@ -27,7 +48,7 @@ body {
 .header-title {
     font-size: 1.1em;
     font-weight: bold;
-    color: #d4d4d4;
+    color: var(--vscode-foreground, #d4d4d4);
     text-align: center;
 }
 
@@ -41,9 +62,9 @@ body {
 #session-selector {
     flex: 1;
     max-width: 220px;
-    background: #1e1e1e;
-    color: #d4d4d4;
-    border: 1px solid #333;
+    background: var(--vscode-dropdown-background, var(--vscode-input-background, #1e1e1e));
+    color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground, #d4d4d4));
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, #333));
     padding: 4px 8px;
     font-size: 0.9em;
     border-radius: 4px;
@@ -52,9 +73,9 @@ body {
 #new-session-btn,
 #delete-session-btn,
 #rename-session-btn {
-    background: #2d2d2d;
-    border: 1px solid #444;
-    color: #d4d4d4;
+    background: var(--vscode-button-secondaryBackground, #2d2d2d);
+    border: 1px solid var(--vscode-button-border, #444);
+    color: var(--vscode-button-secondaryForeground, #d4d4d4);
     cursor: pointer;
     padding: 4px 10px;
     font-size: 1em;
@@ -66,9 +87,9 @@ body {
 #new-session-btn:hover,
 #delete-session-btn:hover,
 #rename-session-btn:hover {
-    background: #007acc;
-    border-color: #007acc;
-    color: #fff;
+    background: var(--vscode-button-hoverBackground, var(--vscode-button-background, #007acc));
+    border-color: var(--vscode-button-background, #007acc);
+    color: var(--vscode-button-foreground, #fff);
 }
 .chat-container {
     flex: 1 1 auto;
@@ -90,14 +111,16 @@ body {
 }
 
 .message.user {
-    background: #007acc;
-    color: #fff;
+    background: var(--vscode-button-background, #007acc);
+    color: var(--vscode-button-foreground, #fff);
     align-self: flex-end;
 }
 
 .message.agent {
-    background: #2d2d2d;
-    color: #d4d4d4;
+    /* 用 input-background（“抬升面”）而非 editorWidget-background：
+       Dark+/Light+ 下 editorWidget-background 与 sideBar-background 同色，气泡会与背景糊在一起 */
+    background: var(--vscode-input-background, #2d2d2d);
+    color: var(--vscode-foreground, #d4d4d4);
     align-self: flex-start;
 }
 
@@ -106,13 +129,13 @@ body {
     bottom: 0;
     display: flex;
     padding: 16px;
-    background: #252526;
-    border-top: 1px solid #333;
+    background: var(--vscode-sideBarSectionHeader-background, #252526);
+    border-top: 1px solid var(--vscode-panel-border, #333);
 }
 
 .plan-toggle {
-    background: #252526;
-    color: #d4d4d4;
+    background: var(--vscode-input-background, #252526);
+    color: var(--vscode-foreground, #d4d4d4);
     padding: 8px 16px;
     border-radius: 8px;
     font-size: 0.9em;
@@ -122,8 +145,8 @@ body {
 }
 
 .spinner {
-    border: 4px solid #252526;
-    border-top: 4px solid #007acc;
+    border: 4px solid var(--vscode-editorWidget-border, #252526);
+    border-top: 4px solid var(--vscode-progressBar-background, #007acc);
     border-radius: 50%;
     width: 21px;
     height: 21px;
@@ -145,7 +168,7 @@ body {
 
 .agent-info {
     font-size: 0.75em;
-    color: #aaa;
+    color: var(--vscode-descriptionForeground, #aaa);
     margin-bottom: 2px;
     margin-left: 2px;
 }
@@ -156,14 +179,14 @@ body {
     border-radius: 8px;
     border: none;
     font-size: 1em;
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: var(--vscode-input-background, #1e1e1e);
+    color: var(--vscode-input-foreground, #d4d4d4);
     margin-right: 8px;
 }
 
 .input-area button {
-    background: #007acc;
-    color: #fff;
+    background: var(--vscode-button-background, #007acc);
+    color: var(--vscode-button-foreground, #fff);
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
@@ -173,7 +196,8 @@ body {
 }
 
 .input-area button:disabled {
-    background: #555;
+    background: var(--vscode-button-secondaryBackground, #555);
+    color: var(--vscode-button-secondaryForeground, #fff);
     cursor: not-allowed;
 }
 
@@ -181,8 +205,8 @@ body {
    仅在发送被禁用（请求进行中）时由 JS setBusy 设为 inline-block */
 .input-area button#stop-btn {
     display: none;
-    background: #c42b1c;
-    color: #fff;
+    background: var(--vscode-statusBarItem-errorBackground, #c42b1c);
+    color: var(--vscode-statusBarItem-errorForeground, #fff);
     border: none;
     border-radius: 8px;
     padding: 10px 20px;
@@ -192,15 +216,105 @@ body {
 }
 
 .input-area button#stop-btn:hover {
-    background: #e0553f;
+    background: var(--vscode-statusBarItem-errorHoverBackground, #e0553f);
 }
 
 ::-webkit-scrollbar {
     width: 8px;
-    background: #252526;
+    background: var(--vscode-sideBar-background, #252526);
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #333;
+    background: var(--vscode-scrollbarSlider-background, #333);
     border-radius: 4px;
+}
+
+/* ==================== 以下为本次追加（新增规则，未改动上方任何既有规则） ====================
+   目的：让交互态与 marked 渲染出的 Markdown 内容同样跟随主题，消除亮/暗主题下的突兀感。
+   所有颜色仍为 var(--vscode-*, 原色/近似原色) 写法。 */
+
+/* 1) 主题明暗基线：VSCode 会在 <body> 上注入主题类名，
+     声明 color-scheme 让原生控件（下拉弹出层、滚动条、选区等）与主题一致 */
+body.vscode-light {
+    color-scheme: light;
+}
+
+body.vscode-dark {
+    color-scheme: dark;
+}
+
+body.vscode-high-contrast {
+    color-scheme: dark;
+}
+
+/* 2) 焦点轮廓：跟随 --vscode-focusBorder */
+#session-selector:focus,
+#new-session-btn:focus,
+#delete-session-btn:focus,
+#rename-session-btn:focus,
+.input-area input:focus,
+.input-area button:focus {
+    outline: 1px solid var(--vscode-focusBorder, #007acc);
+    outline-offset: -1px;
+}
+
+/* 3) 滚动条 hover / active 态：使用 VSCode 同一组 scrollbarSlider 变量 */
+::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground, #4d4d4d);
+}
+
+::-webkit-scrollbar-thumb:active {
+    background: var(--vscode-scrollbarSlider-activeBackground, #5a5a5a);
+}
+
+/* 4) 输入框 placeholder：跟随 --vscode-input-placeholderForeground */
+.input-area input::placeholder {
+    color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #aaa));
+}
+
+/* 5) 聊天消息内的 Markdown（链接 / 行内代码 / 代码块 / 引用）此前无任何样式，
+     会沿用浏览器默认色（暗色主题下链接几乎不可读）；这里补齐主题化配色。 */
+.message a {
+    color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.message a:hover,
+.message a:active {
+    color: var(--vscode-textLink-activeForeground, #3794ff);
+}
+
+.message code {
+    background: var(--vscode-textCodeBlock-background, #2d2d2d);
+    color: var(--vscode-textPreformat-foreground, #d4d4d4);
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.message pre {
+    background: var(--vscode-textCodeBlock-background, #2d2d2d);
+    color: var(--vscode-editor-foreground, #d4d4d4);
+    padding: 10px 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+.message pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+}
+
+.message blockquote {
+    margin: 8px 0;
+    padding: 4px 10px;
+    border-left: 3px solid var(--vscode-textBlockQuote-border, #007acc);
+    background: var(--vscode-textBlockQuote-background, #2d2d2d);
+    color: var(--vscode-descriptionForeground, #aaa);
+}
+
+/* 6) 高对比度主题下气泡与背景常为同色，补一圈 --vscode-contrastBorder 描边；
+      仅在 body.vscode-high-contrast 下生效，不影响亮/暗主题 */
+body.vscode-high-contrast .message {
+    border: 1px solid var(--vscode-contrastBorder, var(--vscode-panel-border, transparent));
 }

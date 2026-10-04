@@ -499,7 +499,30 @@ export async function activate(context) {
 
     // 手动触发行内补全（等价于命令面板里的 "Trigger Inline Suggestion"）
     const triggerInlineCompletion = vscode.commands.registerCommand('pcpr.triggerInlineCompletion', async function () {
-        await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+        const inlineCompletionConfig = vscode.workspace.getConfiguration('pcpr.inlineCompletion');
+        const inlineCompletionEnabled = inlineCompletionConfig.get('enabled', true) !== false;
+
+        // 关闭态：给出可见原因提示（仅提示，不改变原有触发行为）
+        if (!inlineCompletionEnabled) {
+            vscode.window.showInformationMessage(
+                "PCPR inline completion is disabled — right-click the editor to enable it. If no suggestion appears, run 'PCPR: Inline Completion Troubleshooting'."
+            );
+            await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+            return;
+        }
+
+        // 开启态：用短时进度通知让用户看见命令确实被触发
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: "PCPR: requesting inline completion…",
+                cancellable: false
+            },
+            async function () {
+                await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+                await new Promise(function (resolve) { setTimeout(resolve, 2000); });
+            }
+        );
     });
     context.subscriptions.push(triggerInlineCompletion);
 

@@ -7,3 +7,5 @@ test/
 .vscode-test.mjs
 vsc-extension-quickstart.md
 sessions.json
+.agent-teams
+todo.md
